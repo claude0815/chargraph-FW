@@ -1,0 +1,8 @@
+{
+  "name": "PowerOnDetector",
+  "version": "1.0.0",
+  "dependencies": {
+    "fastled/FastLED": "^3.6.0",
+    "adafruit/RTClib": "^2.1.1"
+  }
+}
