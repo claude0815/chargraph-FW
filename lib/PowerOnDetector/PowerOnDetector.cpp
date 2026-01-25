@@ -1,4 +1,4 @@
-#include <powerondetector.h>
+#include <PowerOnDetector.h>
 
 // Flag setzen während System läuft
 void setRunningFlag()
