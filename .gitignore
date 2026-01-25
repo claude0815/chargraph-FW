@@ -64,3 +64,5 @@ hardware/gerber/*.drl
 Thumbs.db 
 desktop.ini 
 CLAUDE.md
+
+.claude
