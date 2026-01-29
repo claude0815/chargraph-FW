@@ -23,7 +23,7 @@
 #include <CharGraphTimeLogic.h>
 
 // Define this to enable debug output
-// #define CHARGRAPH_DEBUG
+#define CHARGRAPH_DEBUG
 
 // 110-character pattern - MUST be exactly 110 characters
 // Format: 10 rows of 11 characters each

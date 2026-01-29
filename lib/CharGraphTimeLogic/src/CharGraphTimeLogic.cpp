@@ -8,25 +8,28 @@
 #include "Constants.h"
 #include <cstring>
 
+#define CHARGRAPH_DEBUG true
+
 // ============================================================================
 // PUBLIC API: GET CHARGRAPH WORDS
 // ============================================================================
 
 int8_t getCharGraphWords(
   const char* pattern,
+  const char* wordsList,
   uint8_t hour,
   uint8_t minute,
   CharGraphTimeWords& outResult
 ) {
-  if (!pattern) {
+  if (!pattern || !wordsList) {
     outResult.wordCount = 0;
     return -1;
   }
 
   // Validate pattern length
-  if (strlen(pattern) != GRID_SIZE) {
+  if ((int8_t)strlen(pattern) != GRID_SIZE) {
     outResult.wordCount = 0;
-    return -2;
+    return (int8_t)strlen(pattern) * -1;
   }
 
   // Validate input ranges
@@ -36,7 +39,7 @@ int8_t getCharGraphWords(
   }
 
   // Validate pattern structure (ES/IST, HALB, UHR placement)
-  ValidationResult structValidation = validateStructure(pattern);
+  ValidationResult structValidation = validateStructure(pattern, wordsList);
   if (!structValidation.valid) {
     outResult.wordCount = 0;
     if (structValidation.reason) {
@@ -135,10 +138,10 @@ uint16_t buildCharGraphText(
 
 #ifdef CHARGRAPH_DEBUG
 
-void debugPrintValidationError(const char* gridStr) {
-  if (!gridStr) return;
+void debugPrintValidationError(const char* gridStr, const char* wordsList) {
+  if (!gridStr || !wordsList) return;
 
-  ValidationResult result = validateStructure(gridStr);
+  ValidationResult result = validateStructure(gridStr, wordsList);
 
   if (!result.valid) {
     Serial.print("Validation Error: ");

@@ -36,15 +36,31 @@ static int16_t findWord(const char* pattern, const char* word_progmem, uint16_t 
 }
 
 // ============================================================================
-// HELPER: Check if PROGMEM string contains uppercase letters
+// HELPER: Check if any word from wordsList appears after startPos in pattern
 // ============================================================================
 
-static bool containsUppercase(const char* pattern, uint16_t startPos) {
-  if (!pattern) return false;
+static bool containsWordAfter(const char* pattern, const char* wordsList, uint16_t startPos) {
+  if (!pattern || !wordsList) return false;
 
-  for (uint16_t i = startPos; pattern[i] != '\0'; i++) {
-    if (pattern[i] >= 'A' && pattern[i] <= 'Z') {
-      return true;
+  // Parse wordsList and check each word
+  uint16_t wordStart = 0;
+  for (uint16_t i = 0; wordsList[i] != '\0'; i++) {
+    if (wordsList[i] == '-' || wordsList[i + 1] == '\0') {
+      // Extract word
+      uint16_t wordLen = (wordsList[i] == '-') ? (i - wordStart) : (i - wordStart + 1);
+      char word[12];  // Max 11 chars + null terminator
+
+      if (wordLen > 0 && wordLen < 12) {
+        strncpy(word, &wordsList[wordStart], wordLen);
+        word[wordLen] = '\0';
+
+        // Check if this word appears after startPos
+        if (findWord(pattern, (const char*)word, startPos) != -1) {
+          return true;
+        }
+      }
+
+      wordStart = i + 1;
     }
   }
   return false;
@@ -65,8 +81,8 @@ bool wordFitsInLine(uint16_t startPos, uint8_t wordLen) {
 // STRUCTURE VALIDATION (with Word Integrity Check)
 // ============================================================================
 
-ValidationResult validateStructure(const char* gridStr) {
-  if (!gridStr) {
+ValidationResult validateStructure(const char* gridStr, const char* wordsList) {
+  if (!gridStr || !wordsList) {
     return {false, ERR_NO_ES};
   }
 
@@ -144,8 +160,8 @@ ValidationResult validateStructure(const char* gridStr) {
   // ========== UHR VALIDATION ==========
   if (uhrPos != -1) {
     // UHR is present - check if at end
-    // After UHR, only placeholders allowed (no uppercase letters)
-    if (containsUppercase(gridStr, uhrPos + 3)) {
+    // After UHR, no words from wordsList should appear
+    if (containsWordAfter(gridStr, wordsList, uhrPos + 3)) {
       return {false, ERR_UHR_NOT_LAST};
     }
   }

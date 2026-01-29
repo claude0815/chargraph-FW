@@ -104,6 +104,6 @@
 #define MINUTE_LEDS_MAGIC       0xEE
 
 #define RUNNING_FLAG_MAGIC 0x42    // Magic Byte
-#define MAGIC_BYTE_INIT    0xA5
+#define MAGIC_BYTE_INIT    0xAA
 
 #endif

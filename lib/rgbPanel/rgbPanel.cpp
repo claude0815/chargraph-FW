@@ -467,7 +467,7 @@ uint8_t testWords()
 
 void checkPattern()
 {
-  testWords();
+  //testWords();
 
     FastLED.clear();
     uint8_t lengthPattern = strlen(testPattern);

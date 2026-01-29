@@ -812,7 +812,7 @@ String getHourName(int hour)
 
 void displayTime(int hours, int minutes)
 {
-  DEBUG_PRINT("Zeit: '");
+  DEBUG_PRINT("displayTime Zeit: '");
   if (hours < 10) DEBUG_PRINT("0");
   DEBUG_PRINT(hours);
   DEBUG_PRINT(":");
@@ -820,14 +820,14 @@ void displayTime(int hours, int minutes)
   DEBUG_PRINT(minutes);
   DEBUG_PRINT("' -> ");
   
-  fadeOutAll(200, 15);
-  //FastLED.setBrightness(80);
-  //FastLED.clear();
-  //showLEDs();
-  //yield();
+  //fadeOutAll(200, 15);
+  FastLED.setBrightness(80);
+  FastLED.clear();
+  showLEDs();
+  yield();
   
   CharGraphTimeWords result;
-  int8_t resultval = getCharGraphWords(DEFAULT_CHARSOAP, hours, minutes, result);
+  int8_t resultval = getCharGraphWords(DEFAULT_CHARSOAP, testPattern, hours, minutes, result);
   
   if (resultval == 0)
   {
@@ -882,12 +882,16 @@ void displayTime(int hours, int minutes)
     }
     DEBUG_PRINT("\n");
   }
-  //yield();
-  //noInterrupts();
-  //showLEDs(); // finaler Frame
-  //interrupts();
-  //yield();
-  fadeInCurrentFrame(80,200,15);
+  else
+  {
+    DEBUG_PRINTF("ERROR %d",resultval);
+  }
+  yield();
+  noInterrupts();
+  showLEDs(); // finaler Frame
+  interrupts();
+  yield();
+  //fadeInCurrentFrame(80,200,15);
 }
 
 // ════════════════════════════════════════════════════════════════

@@ -49,6 +49,7 @@ struct CharGraphTimeWords {
  * Convert time to CharGraph words and LED positions
  *
  * @param pattern 110-character grid (uppercase, uppercase A-Z and 0-9)
+ * @param wordsList Words separated by '-' (e.g. "ES-IST-HALB-UHR-...")
  * @param hour Hour (0-23)
  * @param minute Minute (0-59)
  * @param outResult Result structure (filled on success)
@@ -56,8 +57,9 @@ struct CharGraphTimeWords {
  *
  * Example:
  *   const char pattern[] PROGMEM = "ESIST-FÜNFZEHN...";
+ *   const char wordsList[] = "ES-IST-HALB-UHR-...";
  *   CharGraphTimeWords result;
- *   if (getCharGraphWords(pattern, 14, 25, result)) {
+ *   if (getCharGraphWords(pattern, wordsList, 14, 25, result)) {
  *     Serial.print("Words: ");
  *     for (int i = 0; i < result.wordCount; i++) {
  *       Serial.print((const __FlashStringHelper*) pgm_read_ptr(&result.words[i]));
@@ -67,6 +69,7 @@ struct CharGraphTimeWords {
  */
 int8_t getCharGraphWords(
   const char* pattern,
+  const char* wordsList,
   uint8_t hour,
   uint8_t minute,
   CharGraphTimeWords& outResult
@@ -95,13 +98,13 @@ uint16_t buildCharGraphText(
 // DEBUG FUNCTIONS (Optional, can be disabled)
 // ============================================================================
 
-#ifdef CHARGRAPH_DEBUG
+//#ifdef CHARGRAPH_DEBUG
 
 /**
  * Print validation error message to Serial
  * Only available if CHARGRAPH_DEBUG is defined
  */
-void debugPrintValidationError(const char* gridStr);
+void debugPrintValidationError(const char* gridStr, const char* wordsList);
 
 /**
  * Print LED calculation details to Serial
@@ -109,6 +112,6 @@ void debugPrintValidationError(const char* gridStr);
  */
 void debugPrintLEDInfo(const CharGraphTimeWords& result);
 
-#endif
+//#endif
 
 #endif // CHARGRAPH_TIME_LOGIC_H

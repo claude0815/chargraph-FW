@@ -29,9 +29,10 @@ bool wordFitsInLine(uint16_t startPos, uint8_t wordLen);
  * - UHR is optional, but if present must be at pattern end
  *
  * @param gridStr 110-character pattern (uppercase)
+ * @param wordsList Words separated by '-' (e.g. "ES-IST-HALB-UHR-...")
  * @return ValidationResult with valid flag and error message
  */
-ValidationResult validateStructure(const char* gridStr);
+ValidationResult validateStructure(const char* gridStr, const char* wordsList);
 
 /**
  * Validate mandatory words presence and gaps
