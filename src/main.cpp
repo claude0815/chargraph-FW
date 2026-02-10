@@ -15,37 +15,42 @@ const byte DNS_PORT = 53;
 // ════════════════════════════════════════════════════════════════
 // CHARSOAP / ZEICHENSATZ
 // ════════════════════════════════════════════════════════════════
-void initCharsoap() {
+void initCharsoap(char *_charsoap) {
+    // Konvertiert UTF-8 Umlaute in charsoap zu ASCII in-place
+    // charsoap muss bereits gefüllt sein (von strcpy_P)
+
+    char temp[COLS * ROWS * 2];  // Temporärer Buffer für Konvertierung
     int writePos = 0;
     int readPos = 0;
-    int sourceLen = strlen(DEFAULT_CHARSOAP);
+    int sourceLen = strlen(_charsoap);
 
     while (readPos < sourceLen && writePos < (ROWS * COLS)) {
-        unsigned char c = DEFAULT_CHARSOAP[readPos];
+        unsigned char c = _charsoap[readPos];
 
         // UTF-8 Umlaute erkennen und zu lowercase konvertieren
         if (c == 0xC3 && readPos + 1 < sourceLen) {
-            unsigned char next = DEFAULT_CHARSOAP[readPos + 1];
+            unsigned char next = _charsoap[readPos + 1];
             switch(next) {
-                case 0x84: charsoap[writePos++] = 'a'; break;  // Ä → a
-                case 0x96: charsoap[writePos++] = 'o'; break;  // Ö → o
-                case 0x9C: charsoap[writePos++] = 'u'; break;  // Ü → u
+                case 0x84: temp[writePos++] = 'a'; break;  // Ä → a
+                case 0x96: temp[writePos++] = 'o'; break;  // Ö → o
+                case 0x9C: temp[writePos++] = 'u'; break;  // Ü → u
                 default:
-                    charsoap[writePos++] = c;
-                    if (writePos < (ROWS * COLS)) charsoap[writePos++] = next;
+                    temp[writePos++] = c;
+                    if (writePos < (ROWS * COLS)) temp[writePos++] = next;
                     break;
             }
             readPos += 2;
         } else {
-            charsoap[writePos++] = c;
+            temp[writePos++] = c;
             readPos++;
         }
     }
 
-    charsoap[writePos] = '\0';
+    temp[writePos] = '\0';
+    strcpy(_charsoap, temp);  // Konvertiertes Ergebnis zurück nach charsoap
 
-    DEBUG_PRINTLN("✓ Default charsoap initialisiert (Umlaute → lowercase)");
-    DEBUG_PRINTLN(charsoap);
+    DEBUG_PRINTLN("✓ charsoap initialisiert (Umlaute → lowercase)");
+    DEBUG_PRINTLN(_charsoap);
 }
 
 void loadCharsoap() {
@@ -119,24 +124,20 @@ void loadCharsoap() {
             }
         } else {
             DEBUG_PRINTF("❌ Falsche Länge: %d\n", writePos);
-            strcpy(charsoap, DEFAULT_CHARSOAP);
-            initCharsoap();  // UTF-8 zu ASCII konvertieren!
+            strcpy_P(charsoap, (const char*)DEFAULT_CHARSOAP);
+            initCharsoap(charsoap);  // UTF-8 zu ASCII konvertieren!
             customCharsoap = false;
             DEBUG_PRINTLN("→ Verwende Default");
         }
     } else {
-        strcpy(charsoap, DEFAULT_CHARSOAP);
-        initCharsoap();  // UTF-8 zu ASCII konvertieren!
+        strcpy_P(charsoap, (const char*)DEFAULT_CHARSOAP);
+        initCharsoap(charsoap);  // UTF-8 zu ASCII konvertieren!
         DEBUG_PRINTLN("✓ Standard charsoap");
     }
 }
 
-void saveCharsoap(const char* newCharsoap) {
-    if (strlen(newCharsoap) != (ROWS * COLS)) {
-        DEBUG_PRINTF("❌ Länge: %d\n", strlen(newCharsoap));
-        return;
-    }
-
+void saveCharsoap(const char* newCharsoap)
+{
     char cleaned[uint8_t (ROWS * COLS)+1];
     uint16_t writePos = 0;
     uint16_t readPos = 0;
@@ -184,8 +185,8 @@ void saveCharsoap(const char* newCharsoap) {
 }
 
 void resetCharsoap() {
-    strcpy(charsoap, DEFAULT_CHARSOAP);
-    initCharsoap();  // UTF-8 zu ASCII konvertieren!
+    strcpy_P(charsoap, (const char*)DEFAULT_CHARSOAP);
+    initCharsoap(charsoap);  // UTF-8 zu ASCII konvertieren!
     customCharsoap = false;
     EEPROM.write(ADDR_CHARSOAP_SET, 0);
     EEPROM.commit();
@@ -220,8 +221,8 @@ void loadSpecialWords() {
         // Erste Initialisierung: Default-Werte setzen
         DEBUG_PRINTLN("Setze Standard SPECIAL_WORD...");
         const char DEFAULT_SPECIAL_WORD[MAXWORDS][12] = {
-            "RWD",
-            "",
+            "DLZIAX",
+            "FACW",
             ""
         };
 
@@ -439,8 +440,8 @@ void loadConfig() {
         DEBUG_PRINTLN("╚════════════════════════════════════════════════════╝");
 
         // DEFAULT_CHARSOAP vorbereiten (UTF-8 → ASCII)
-        strcpy(charsoap, DEFAULT_CHARSOAP);
-        initCharsoap();
+        strcpy_P(charsoap, (const char*)DEFAULT_CHARSOAP);
+        initCharsoap(charsoap);
 
         DEBUG_PRINTLN("→ Speichere DEFAULT_CHARSOAP ins EEPROM...");
 
@@ -827,7 +828,7 @@ void displayTime(int hours, int minutes)
   yield();
   
   CharGraphTimeWords result;
-  int8_t resultval = getCharGraphWords(DEFAULT_CHARSOAP, testPattern, hours, minutes, result);
+  int8_t resultval = getCharGraphWords(charsoap, testPattern, hours, minutes, result);
   
   if (resultval == 0)
   {
@@ -1361,6 +1362,7 @@ void handleSave() {
         server.send(400, "text/plain", "Fehler");
     }
 }
+
 // ════════════════════════════════════════════════════════════════
 // LED TEST HANDLER
 // ════════════════════════════════════════════════════════════════
@@ -2395,7 +2397,7 @@ void setup()
     Serial.begin(115200);
     while (!Serial) { }
     Serial.setDebugOutput(true);
-    delay(500);
+    delay(5000);
     Serial.setDebugOutput(false);
 
     Serial.printf("Flash Chip ID: %08X\n", ESP.getFlashChipId());
@@ -2450,7 +2452,7 @@ void setup()
     EEPROM.begin(EEPROM_SIZE);
 
     // Zuerst Default charsoap initialisieren
-    initCharsoap();
+    initCharsoap(charsoap);
 
     loadCharsoap();
     loadSpecialWords();

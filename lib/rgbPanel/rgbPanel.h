@@ -11,6 +11,8 @@
   #define COLS 11
   #define ROWS 11
 
+  #define MAXWORDS 3 //Anzahl Spezialwörter
+  #define SPECIAL_WORD_LENGTH (COLS+2)
   extern CRGB normalColor;
   extern CRGB specialColor;
   extern CRGB leds[NUM_LEDS];
@@ -20,9 +22,9 @@
   extern int MINUTE_LEDS[4];
   extern char testPattern[];
   extern bool customCharsoap;
-  extern char charsoap[COLS * ROWS * 2];
+  extern char charsoap[(COLS * ROWS * 2)+1];
   extern const char DEFAULT_CHARSOAP[];
-  extern char SPECIAL_WORD[3][12];  // MAXWORDS = 3
+  extern char SPECIAL_WORD[MAXWORDS][SPECIAL_WORD_LENGTH];  // MAXWORDS = 3
 
   extern void showLEDs();
   extern int bridgeLED(int pos);

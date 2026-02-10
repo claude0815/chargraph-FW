@@ -88,9 +88,11 @@ uint8_t getWordsForTime(
     hasUhrAtEnd = afterUhrEmpty;
   }
 
-  // ========== STEP 4: Calculate display hour (advance at mm >= 20) ==========
+  // ========== STEP 4: Calculate display hour (advance at mm >= 25) ==========
+  // :20-:24 ZWANZIG NACH uses current hour
+  // :25-:59 other rules use next hour
   uint8_t h12 = hour % 12;
-  if (minute >= 20) {
+  if (minute >= 25) {
     h12 = (h12 + 1) % 12;
   }
 

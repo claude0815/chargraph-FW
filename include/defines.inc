@@ -25,7 +25,6 @@
 
 #define AP_SSID_LENGHT     13
 #define AP_PASSWORD_LENGTH 17
-#define MAXWORDS           3    // Anzahl Spezialwörter
 
 // ════════════════════════════════════════════════════════════════
 // EEPROM ADRESSEN
@@ -104,6 +103,6 @@
 #define MINUTE_LEDS_MAGIC       0xEE
 
 #define RUNNING_FLAG_MAGIC 0x42    // Magic Byte
-#define MAGIC_BYTE_INIT    0xAA
+#define MAGIC_BYTE_INIT    0x55
 
 #endif

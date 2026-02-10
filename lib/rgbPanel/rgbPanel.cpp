@@ -10,15 +10,15 @@ CRGB specialColor = CRGB::Green;
 CRGB leds[NUM_LEDS];
 uint8_t brightness = 80;
 
-char charsoap[COLS * ROWS * 2]; //Char * 2 to fit all in, cause UTF (maybe ÄÖÜ) 
+char charsoap[(COLS * ROWS * 2) + 1] = {'\0'}; //Char * 2 to fit all in, cause UTF (maybe ÄÖÜ) 
 bool customCharsoap = false;
 
 // ── Konfiguration für Spezialanzeige ──
 // MAXWORDS ist in defines.inc definiert
 // Platzhalter - werden dynamisch aus EEPROM oder Defaults geladen (siehe loadSpecialWords() in main.cpp)
-char SPECIAL_WORD[MAXWORDS][12] = {"",  //max 11 Zeichen, \0 wird automatisch angefügt!
-                                   "",
-                                   "" };   //Text der ein- bzw. ausgeblendet werden soll
+char SPECIAL_WORD[MAXWORDS][13] = {"DLZIAX\0",  //max 11 Zeichen, \0 wird automatisch angefügt!
+                                   "FACW\0",
+                                   "\0" };   //Text der ein- bzw. ausgeblendet werden soll
 const uint16_t SPECIAL_HOLD_MS = 5000;       // Anzeigedauer des Spezialworts
 
 const int hourpattern[][2] = {
@@ -87,7 +87,7 @@ void fadeInCurrentFrame(uint8_t targetBrightness, uint8_t steps = MAX_STEPS, uin
 
 // Zeigt ein Wort (falls vorhanden) mit sanftem Fade-In, hält es und blendet es wieder aus
 // OPTIMIERT: Schnellere Animation für bessere WiFi-Performance
-bool showSpecialWordSequence(const char words[][12], CRGB color, uint8_t steps = 20, uint16_t stepDelayMs = 15)
+bool showSpecialWordSequence(const char words[][SPECIAL_WORD_LENGTH], CRGB color, uint8_t steps = 20, uint16_t stepDelayMs = 15)
 {
 
   int pos = findWord(words[0], 0);
@@ -404,24 +404,27 @@ int findWord(const char* word, int occurrence, bool searchBackward)
 
 uint8_t testWords()
 {
-  //return 0;
+  #if (defined(TEST_ALLTHETIME) && TEST_ALLTHETIME == false)
+    return 0;
+  #endif
+
   DEBUG_PRINT("╔════════════════════════╗\n");
   DEBUG_PRINT("║   Teste Wörter ...     ║\n");
   DEBUG_PRINT("╚════════════════════════╝\n")
-  DEBUG_PRINTLN(DEFAULT_CHARSOAP);
-  if(strlen(DEFAULT_CHARSOAP) != (COLS * (ROWS-1)))
+  DEBUG_PRINTLN(charsoap);
+  if(strlen(charsoap) != (COLS * (ROWS-1)))
   {
     //return -1;
     DEBUG_PRINT("\nLänge stimmt nicht: ");
-    DEBUG_PRINTLN(strlen(DEFAULT_CHARSOAP));
+    DEBUG_PRINTLN(strlen(charsoap));
   }
   else
   {
     DEBUG_PRINT("\nLänge stimmt: ");
-    DEBUG_PRINTLN(strlen(DEFAULT_CHARSOAP));
+    DEBUG_PRINTLN(strlen(charsoap));
   }
-  uint8_t currentHour   = 12;
-  uint8_t currentMinute = 29;
+  uint8_t currentHour   = 0;
+  uint8_t currentMinute = 0;
   //CharGraphTimeWords result;
   while(true)
   {
@@ -429,10 +432,10 @@ uint8_t testWords()
     currentMinute++;
     if(currentMinute == 60)
     {
-      currentHour   = 1;
-      currentMinute = 0;
+      currentHour   += 1;
+      currentMinute  = 0;
     }
-    if(currentHour == 1 && currentMinute == 31)
+    if(currentHour == 23 && currentMinute == 59)
     {
       DEBUG_PRINT  ("\n╔════════════════════════╗\n");
       DEBUG_PRINT  (  "║   Teste Wörter fertig. ║\n");
@@ -449,9 +452,6 @@ uint8_t testWords()
     DEBUG_PRINT(currentMinute);
     DEBUG_PRINT("' -> ");
     //delay(1000);
-    
-    //int8_t resultval = getCharGraphWords(DEFAULT_CHARSOAP, currentHour, currentMinute, result);
-    //if (resultval == 0)
     {
       // ===== Display current time =====
       displayTime(currentHour, currentMinute);
@@ -461,13 +461,13 @@ uint8_t testWords()
     //  DEBUG_PRINT("ERROR: "); DEBUG_PRINT(resultval); DEBUG_PRINTLN(" Pattern validation failed!");
     //  delay(1000);
     //}
-    delay(500);
+    delay(50);
   }
 }
 
 void checkPattern()
 {
-  //testWords();
+  testWords();
 
     FastLED.clear();
     uint8_t lengthPattern = strlen(testPattern);

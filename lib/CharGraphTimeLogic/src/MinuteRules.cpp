@@ -129,17 +129,17 @@ static uint8_t rule_15_19(const RuleContext& ctx, const char** outWords) {
 // :20-:24 - ZWANZIG NACH or ZEHN VOR HALB (with fallback support)
 static uint8_t rule_20_24(const RuleContext& ctx, const char** outWords) {
   if (ctx.fallbackLevel == 0 && ctx.hasZwanzig) {
-    // Primary: ZWANZIG NACH [h]
+    // Primary: ZWANZIG NACH [h] - uses current hour
     outWords[0] = ZWANZIG;
     outWords[1] = NACH;
     outWords[2] = ctx.hourWord;
     return 3;
   }
-  // Fallback: ZEHN VOR HALB [h+1]
+  // Fallback: ZEHN VOR HALB [h+1] - must use NEXT hour
   outWords[0] = ZEHN;
   outWords[1] = VOR;
   outWords[2] = HALB;
-  outWords[3] = ctx.hourWord;
+  outWords[3] = getHourWord((ctx.h12 + 1) % 12);
   return 4;
 }
 
