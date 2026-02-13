@@ -17,8 +17,8 @@ int8_t isConfigured = 0xFF;
 const unsigned long AP_TIMEOUT = 300000;
 bool powerLossDetected = false;  //Flag für Stromausfall
 
-char AP_SSID[AP_SSID_LENGHT]     = "CharGraph\0";
-char AP_PASSWORD[AP_PASSWORD_LENGTH] = "CharGraph\0";
+char AP_SSID[AP_SSID_LENGHT]     = "Wortuhr2026\0";
+char AP_PASSWORD[AP_PASSWORD_LENGTH] = "Wortuhr2026\0";
 
 
 uint16_t bootCounter = 0;

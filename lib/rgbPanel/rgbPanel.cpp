@@ -16,8 +16,8 @@ bool customCharsoap = false;
 // ── Konfiguration für Spezialanzeige ──
 // MAXWORDS ist in defines.inc definiert
 // Platzhalter - werden dynamisch aus EEPROM oder Defaults geladen (siehe loadSpecialWords() in main.cpp)
-char SPECIAL_WORD[MAXWORDS][13] = {"DLZIAX\0",  //max 11 Zeichen, \0 wird automatisch angefügt!
-                                   "FACW\0",
+char SPECIAL_WORD[MAXWORDS][13] = {"NAJAMHNAVIN\0",  //max 11 Zeichen, \0 wird automatisch angefügt!
+                                   "\0",
                                    "\0" };   //Text der ein- bzw. ausgeblendet werden soll
 const uint16_t SPECIAL_HOLD_MS = 5000;       // Anzeigedauer des Spezialworts
 
