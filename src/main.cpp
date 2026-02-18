@@ -221,8 +221,8 @@ void loadSpecialWords() {
         // Erste Initialisierung: Default-Werte setzen
         DEBUG_PRINTLN("Setze Standard SPECIAL_WORD...");
         const char DEFAULT_SPECIAL_WORD[MAXWORDS][12] = {
-            "DLZIAX",
-            "FACW",
+            "DN9DAC",
+            "",
             ""
         };
 
