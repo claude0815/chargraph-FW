@@ -913,12 +913,12 @@
         <div class="form-group">
             <label>📝 Charsoap (11×10 Zeichen):</label>
             <div style="font-size: 12px; color: #666; margin-bottom: 10px;">
-                Großbuchstaben (A-Z), Kleinbuchstaben (a-z) und Bindestriche (-). Genau 110 Zeichen.<br>
+                Großbuchstaben (A-Z), Kleinbuchstaben (a-z), Ziffern (0-9) und Bindestriche (-). Genau 110 Zeichen.<br>
                 <strong style="color: #ff9800;">💡 Tipp:</strong> Umlaute werden zu lowercase: Ä→a, Ö→o, Ü→u
             </div>
             <textarea id="charsoap" rows="11" maxlength="110" 
                       oninput="validateCharsoap()"
-                      onkeypress="return /[A-ZÄÖÜa-zäöü-]/i.test(event.key)"></textarea>
+                      onkeypress="return /[A-ZÄÖÜa-zäöü0-9-]/i.test(event.key)"></textarea>
             <div id="charsoap-info" style="margin-top: 10px; font-size: 13px;">
                 <span id="charsoap-length" style="color: #666;">Länge: 0 / 110</span>
                 <span id="charsoap-valid" style="margin-left: 15px;"></span>
@@ -1380,8 +1380,8 @@
                 uptimeDays + ' Tage (' + uptimeHours + 'h ' + uptimeMinutes + 'm)';
         }
         
-        // Akzeptierte Zeichen (deckungsgleich mit Backend: A-Z, a-z, '-')
-        const CHARSOAP_ALLOWED = /^[A-Za-z\-]*$/;
+        // Akzeptierte Zeichen (deckungsgleich mit Backend: A-Z, a-z, 0-9, '-')
+        const CHARSOAP_ALLOWED = /^[A-Za-z0-9\-]*$/;
 
         function normalizeCharsoap(raw) {
             // Whitespace/Newlines entfernen, dann Umlaute auf Kleinbuchstaben mappen.
@@ -1413,7 +1413,7 @@
             const valid = CHARSOAP_ALLOWED.test(value);
 
             if (!valid) {
-                const m = value.match(/[^A-Za-z\-]/);
+                const m = value.match(/[^A-Za-z0-9\-]/);
                 const invalidChar = m ? m[0] : '?';
                 const position = m ? m.index : -1;
                 lengthSpan.style.color = '#f44336';
@@ -1552,7 +1552,7 @@
             }
 
             if (!CHARSOAP_ALLOWED.test(charsoap)) {
-                alert('❌ Nur Buchstaben (A-Z, a-z) und Bindestriche (-)!');
+                alert('❌ Nur Buchstaben (A-Z, a-z), Ziffern (0-9) und Bindestriche (-)!');
                 return;
             }
 

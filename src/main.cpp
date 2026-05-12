@@ -94,7 +94,7 @@ void loadCharsoap() {
                         break;
                 }
                 readPos += 2;
-            } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '-') {
+            } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
                 charsoap[writePos++] = c;
                 readPos++;
             } else if (c < 0x80) {
@@ -159,7 +159,7 @@ void saveCharsoap(const char* newCharsoap)
                     return;
             }
             readPos += 2;
-        } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '-') {
+        } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
             cleaned[writePos++] = c;
             readPos++;
         } else {
