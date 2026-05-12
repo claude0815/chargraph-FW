@@ -2217,6 +2217,38 @@ bool detectPowerLoss() {
 // ════════════════════════════════════════════════════════════════
 // WIFI STATION SETUP
 // ════════════════════════════════════════════════════════════════
+static WiFiEventHandler s_disconnectHandler;
+
+static const char* wifiDisconnectReasonName(uint8_t r) {
+    switch (r) {
+        case REASON_UNSPECIFIED:              return "UNSPECIFIED";
+        case REASON_AUTH_EXPIRE:              return "AUTH_EXPIRE";
+        case REASON_AUTH_LEAVE:               return "AUTH_LEAVE";
+        case REASON_ASSOC_EXPIRE:             return "ASSOC_EXPIRE";
+        case REASON_ASSOC_TOOMANY:            return "ASSOC_TOOMANY";
+        case REASON_NOT_AUTHED:               return "NOT_AUTHED";
+        case REASON_NOT_ASSOCED:              return "NOT_ASSOCED";
+        case REASON_ASSOC_LEAVE:              return "ASSOC_LEAVE";
+        case REASON_ASSOC_NOT_AUTHED:         return "ASSOC_NOT_AUTHED";
+        case REASON_4WAY_HANDSHAKE_TIMEOUT:   return "4WAY_HANDSHAKE_TIMEOUT (falsches Passwort?)";
+        case REASON_GROUP_KEY_UPDATE_TIMEOUT: return "GROUP_KEY_UPDATE_TIMEOUT";
+        case REASON_IE_IN_4WAY_DIFFERS:       return "IE_IN_4WAY_DIFFERS";
+        case REASON_GROUP_CIPHER_INVALID:     return "GROUP_CIPHER_INVALID";
+        case REASON_PAIRWISE_CIPHER_INVALID:  return "PAIRWISE_CIPHER_INVALID";
+        case REASON_AKMP_INVALID:             return "AKMP_INVALID";
+        case REASON_UNSUPP_RSN_IE_VERSION:    return "UNSUPP_RSN_IE_VERSION";
+        case REASON_INVALID_RSN_IE_CAP:       return "INVALID_RSN_IE_CAP";
+        case REASON_802_1X_AUTH_FAILED:       return "802.1X_AUTH_FAILED (RADIUS lehnt Username/Passwort ab)";
+        case REASON_CIPHER_SUITE_REJECTED:    return "CIPHER_SUITE_REJECTED";
+        case REASON_BEACON_TIMEOUT:           return "BEACON_TIMEOUT";
+        case REASON_NO_AP_FOUND:              return "NO_AP_FOUND";
+        case REASON_AUTH_FAIL:                return "AUTH_FAIL";
+        case REASON_ASSOC_FAIL:               return "ASSOC_FAIL";
+        case REASON_HANDSHAKE_TIMEOUT:        return "HANDSHAKE_TIMEOUT";
+        default:                              return "unbekannt";
+    }
+}
+
 void setupWiFiStation() {
     if (!staEnabled || strlen(staSsid) == 0) {
         DEBUG_PRINTLN("→ WiFi Station deaktiviert (keine Credentials)");
@@ -2241,6 +2273,13 @@ void setupWiFiStation() {
         DEBUG_PRINTLN("Verwende DHCP");
     }
 
+    // Disconnect-Reason als Klartext loggen (hilfreich fuer Enterprise-Debug)
+    s_disconnectHandler = WiFi.onStationModeDisconnected(
+        [](const WiFiEventStationModeDisconnected& evt) {
+            DEBUG_PRINTF("✗ WiFi disconnect: reason=%u (%s)\n",
+                         evt.reason, wifiDisconnectReasonName(evt.reason));
+        });
+
     // Auto-Reconnect aktivieren
     WiFi.setAutoReconnect(true);
     WiFi.persistent(false);  // Kein Flash-Write bei jedem Connect
@@ -2248,7 +2287,7 @@ void setupWiFiStation() {
     // Verbindung starten
     if (staEnterprise && strlen(staIdentity) > 0) {
         DEBUG_PRINTLN("→ WPA2-Enterprise (PEAP/MS-CHAPv2)");
-        DEBUG_PRINTF("  Identity: %s\n", staIdentity);
+        DEBUG_PRINTF("  Username: %s\n", staIdentity);
 
         // SSID via SDK setzen (kein PSK, das uebernimmt der Enterprise-Layer)
         struct station_config conf;
@@ -2267,7 +2306,12 @@ void setupWiFiStation() {
         // NICHT verifiziert (bewusste Entscheidung – siehe vars.inc).
         wifi_station_set_wpa2_enterprise_auth(1);
 
-        wifi_station_set_enterprise_identity((uint8_t*)staIdentity, strlen(staIdentity));
+        // Outer Identity (anonymous identity) bewusst LEER lassen – das ist die
+        // Vorgabe vieler Schul-/Firmen-RADIUS-Konfigurationen (auch in deren
+        // Linux-Anleitungen: "Anonymous identity: leer lassen"). Der echte
+        // Username wird ausschliesslich in Phase 2 (im TLS-Tunnel) als
+        // MS-CHAPv2-Identitaet uebertragen.
+        wifi_station_set_enterprise_identity((uint8_t*)"", 0);
         wifi_station_set_enterprise_username((uint8_t*)staIdentity, strlen(staIdentity));
         wifi_station_set_enterprise_password((uint8_t*)staPassword, strlen(staPassword));
 
