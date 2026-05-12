@@ -1727,7 +1727,11 @@ void handleGetWiFiConfig() {
     // WiFi Station Config
     json += "\"staEnabled\":" + String(staEnabled ? "true" : "false") + ",";
     json += "\"staSsid\":\"" + String(staSsid) + "\",";
-    json += "\"staPassword\":\"" + String(staPassword) + "\",";
+    // Passwort niemals im Klartext ausliefern: Frontend bekommt nur einen Marker,
+    // dass eines gespeichert ist. Beim /wifi/save wird ein leeres Feld als
+    // "bestehendes Passwort beibehalten" interpretiert (staPasswordKeep=1).
+    json += "\"staPassword\":\"\",";
+    json += "\"staPasswordSet\":" + String(staPassword[0] != '\0' ? "true" : "false") + ",";
     json += "\"staDhcp\":" + String(staDhcp ? "true" : "false") + ",";
     json += "\"staIP\":\"" + staIP.toString() + "\",";
     json += "\"staGateway\":\"" + staGateway.toString() + "\",";
@@ -1769,12 +1773,16 @@ void handleSaveWiFiConfig() {
         changed = true;
     }
 
-    // Password
+    // Password: leeres Feld + staPasswordKeep=1 = bestehendes Passwort behalten
     if (server.hasArg("staPassword")) {
         String newPassword = server.arg("staPassword");
-        strncpy(staPassword, newPassword.c_str(), 63);
-        staPassword[63] = '\0';
-        changed = true;
+        bool keep = server.hasArg("staPasswordKeep") &&
+                    (server.arg("staPasswordKeep") == "1" || server.arg("staPasswordKeep") == "true");
+        if (!(keep && newPassword.length() == 0)) {
+            strncpy(staPassword, newPassword.c_str(), 63);
+            staPassword[63] = '\0';
+            changed = true;
+        }
     }
 
     // DHCP

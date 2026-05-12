@@ -1173,12 +1173,19 @@
             section.classList.toggle('collapsed');
             toggle.classList.toggle('collapsed');
 
-            // Helligkeits-Sektion Status tracken
+            // Sektion-Status tracken (für bedingtes Polling)
+            const isOpen = !section.classList.contains('collapsed');
+            sectionOpen[sectionId] = isOpen;
             if (sectionId === 'section-autobrightness') {
-                brightnessectionOpen = !section.classList.contains('collapsed');
-                console.log('Helligkeits-Sektion:', brightnessectionOpen ? 'geöffnet' : 'geschlossen');
-            } else {
-                // Wenn andere Sektion geöffnet wird, Helligkeits-Sektion ist geschlossen
+                brightnessectionOpen = isOpen;
+            }
+            // Beim Öffnen einer Sektion: einmaliges, frisches Laden
+            if (isOpen) {
+                if (sectionId === 'section-wifi') loadWiFiConfig(true);
+                if (sectionId === 'section-autobrightness') loadAutoBrightnessConfig();
+            }
+            // Wird eine andere Sektion geöffnet, sind die anderen automatisch zu
+            if (sectionId !== 'section-autobrightness') {
                 brightnessectionOpen = false;
             }
 
@@ -1373,66 +1380,59 @@
                 uptimeDays + ' Tage (' + uptimeHours + 'h ' + uptimeMinutes + 'm)';
         }
         
+        // Akzeptierte Zeichen (deckungsgleich mit Backend: A-Z, a-z, '-')
+        const CHARSOAP_ALLOWED = /^[A-Za-z\-]*$/;
+
+        function normalizeCharsoap(raw) {
+            // Whitespace/Newlines entfernen, dann Umlaute auf Kleinbuchstaben mappen.
+            // Reihenfolge wichtig: erst toUpperCase (macht ü→Ü), dann gezielt ersetzen.
+            let text = raw.replace(/\s/g, '').toUpperCase();
+            text = text.replace(/Ä/g, 'a').replace(/Ö/g, 'o').replace(/Ü/g, 'u');
+            return text;
+        }
+
         function validateCharsoap() {
             const textarea = document.getElementById('charsoap');
             const lengthSpan = document.getElementById('charsoap-length');
             const validSpan = document.getElementById('charsoap-valid');
-            
-            let text = textarea.value.toUpperCase();
-            
-            const hadUmlauts = /[ÄÖÜ]/.test(text);
-            text = text.replace(/Ä/g, 'a');
-            text = text.replace(/Ö/g, 'o');
-            text = text.replace(/Ü/g, 'u');
-            
-            if (textarea.value !== text) {
-                const cursorPos = textarea.selectionStart;
-                textarea.value = text;
-                textarea.setSelectionRange(cursorPos, cursorPos);
-                
-                if (hadUmlauts) {
-                    validSpan.innerHTML = '💡 Umlaut(e) → lowercase';
-                    validSpan.style.color = '#ff9800';
-                    
-                    setTimeout(() => {
-                        validateCharsoap();
-                    }, 2000);
-                    return;
-                }
-            }
-            
-            const length = textarea.value.length;
-            lengthSpan.innerHTML = 'Länge: ' + length + ' / 110';
-            
-            //const valid = /^[A-Za-z\-]*$/.test(textarea.value);
-            //const valid = /^([A-Za-z\-]*|DL0WH)$/.test(textarea.value);
-            const valid = /^(?:[A-Z0-9ÄÖÜ\-]*|DL0WH)$/.test(textarea.value);
 
-            if (length === 110 && valid) {
-                lengthSpan.style.color = '#4caf50';
-                validSpan.innerHTML = '✓ Gültig';
-                validSpan.style.color = '#4caf50';
+            const normalized = normalizeCharsoap(textarea.value);
+            const hadUmlauts = /[ÄÖÜäöü]/.test(textarea.value);
+
+            // Bei Bedarf Inhalt ersetzen, Cursor erhalten
+            if (textarea.value.replace(/\s/g, '') !== normalized) {
+                const cursorPos = textarea.selectionStart;
+                textarea.value = normalized;
+                textarea.setSelectionRange(Math.min(cursorPos, normalized.length), Math.min(cursorPos, normalized.length));
+            }
+
+            const value = textarea.value;
+            const length = value.length;
+            lengthSpan.innerHTML = 'Länge: ' + length + ' / 110';
+
+            const valid = CHARSOAP_ALLOWED.test(value);
+
+            if (!valid) {
+                const m = value.match(/[^A-Za-z\-]/);
+                const invalidChar = m ? m[0] : '?';
+                const position = m ? m.index : -1;
+                lengthSpan.style.color = '#f44336';
+                validSpan.innerHTML = '❌ Ungültiges Zeichen "' + invalidChar + '" an Position ' + position;
+                validSpan.style.color = '#f44336';
             } else if (length > 110) {
                 lengthSpan.style.color = '#f44336';
                 validSpan.innerHTML = '❌ Zu lang!';
                 validSpan.style.color = '#f44336';
-            } else if (!valid) {
-               const invalidCharMatch = textarea.value.match(/[^A-Z0ÄÖÜ\-]/);
-               if (invalidCharMatch)
-               {
-                 const position = invalidCharMatch.index;
-                 const invalidChar = invalidCharMatch[0];
-                 console.log(`Ungültiges Zeichen '${invalidChar}' an Position ${position}`);
-                }
-                lengthSpan.style.color = '#f44336';
-                validSpan.innerHTML = '❌ Ungültiges Zeichen "'+ invalidChar + '" an ' + position;
-                validSpan.style.color = '#f44336';
+            } else if (length === 110) {
+                lengthSpan.style.color = '#4caf50';
+                validSpan.innerHTML = hadUmlauts ? '✓ Gültig (Umlaute umgewandelt)' : '✓ Gültig';
+                validSpan.style.color = '#4caf50';
             } else {
                 lengthSpan.style.color = '#ffc107';
-                validSpan.innerHTML = '⚠ Zu kurz';
+                validSpan.innerHTML = hadUmlauts ? '⚠ Zu kurz (Umlaute umgewandelt)' : '⚠ Zu kurz';
                 validSpan.style.color = '#ffc107';
             }
-            
+
             formatCharsoap();
         }
         
@@ -1544,16 +1544,14 @@
         }
 
         function saveCharsoap() {
-            let charsoap = document.getElementById('charsoap').value;
-
-            charsoap = charsoap.replace(/\s/g, '');
+            const charsoap = normalizeCharsoap(document.getElementById('charsoap').value);
 
             if (charsoap.length !== 110) {
                 alert('❌ Charsoap muss 110 Zeichen lang sein!\nAktuell: ' + charsoap.length);
                 return;
             }
 
-            if (!/^[A-Za-z0-9\-]*$/.test(charsoap)) {
+            if (!CHARSOAP_ALLOWED.test(charsoap)) {
                 alert('❌ Nur Buchstaben (A-Z, a-z) und Bindestriche (-)!');
                 return;
             }
@@ -1847,34 +1845,39 @@
         // WIFI / NTP CONFIG FUNCTIONS
         // ════════════════════════════════════════════════════════════════
 
-        function loadWiFiConfig() {
+        function loadWiFiConfig(force) {
+            // Während eines Speichervorgangs niemals überschreiben.
+            if (wifiSaveInFlight) return;
+            const allowFormUpdate = force === true || (!wifiFormDirty && !inputHasFocus);
             fetch('/wifi/config')
                 .then(response => response.json())
                 .then(data => {
-                    // WiFi Station Settings
-                    document.getElementById('staEnabled').checked = data.staEnabled;
-
-                    // Gespeicherte SSID merken
+                    // Gespeicherte SSID immer merken (für scanWiFi-Marker)
                     savedSsidFromConfig = data.staSsid || '';
 
-                    // Passwort setzen
-                    document.getElementById('staPassword').value = data.staPassword || '';
-                    document.getElementById('staDhcp').checked = data.staDhcp;
-                    document.getElementById('staIP').value = data.staIP || '';
-                    document.getElementById('staGateway').value = data.staGateway || '';
-                    document.getElementById('staSubnet').value = data.staSubnet || '255.255.255.0';
-                    document.getElementById('staDNS').value = data.staDNS || '';
+                    // Form-Felder NUR aktualisieren, wenn der Benutzer sie nicht bearbeitet
+                    if (allowFormUpdate) {
+                        document.getElementById('staEnabled').checked = data.staEnabled;
+                        // Passwort: Backend liefert Platzhalter, falls bereits eines gespeichert ist
+                        document.getElementById('staPassword').value = data.staPassword || '';
+                        document.getElementById('staPassword').placeholder =
+                            data.staPasswordSet ? '••• gespeichert (leer lassen, um beizubehalten)' : 'WLAN-Passwort';
+                        document.getElementById('staDhcp').checked = data.staDhcp;
+                        document.getElementById('staIP').value = data.staIP || '';
+                        document.getElementById('staGateway').value = data.staGateway || '';
+                        document.getElementById('staSubnet').value = data.staSubnet || '255.255.255.0';
+                        document.getElementById('staDNS').value = data.staDNS || '';
+                        document.getElementById('ntpEnabled').checked = data.ntpEnabled;
+                        document.getElementById('ntpServer').value = data.ntpServer || 'ptbtime1.ptb.de';
+                        clearWifiFormDirty();
+                    }
 
-                    // WiFi Status
+                    // Reine Status-Anzeigen werden immer aktualisiert (überschreiben keine Eingaben)
                     document.getElementById('staConnected').innerHTML = data.staConnected ?
                         '<span style="color: green;">✓ Verbunden</span>' :
                         '<span style="color: red;">✗ Nicht verbunden</span>';
                     document.getElementById('staLocalIP').innerHTML = data.staLocalIP || '—';
                     document.getElementById('staRSSI').innerHTML = data.staConnected ? data.staRSSI : '—';
-
-                    // NTP Settings
-                    document.getElementById('ntpEnabled').checked = data.ntpEnabled;
-                    document.getElementById('ntpServer').value = data.ntpServer || 'ptbtime1.ptb.de';
 
                     // NTP Status
                     if (data.ntpLastSync > 0) {
@@ -2062,7 +2065,10 @@
 
             params.append('staEnabled', document.getElementById('staEnabled').checked ? '1' : '0');
             params.append('staSsid', ssidValue);
-            params.append('staPassword', document.getElementById('staPassword').value);
+            const pwField = document.getElementById('staPassword');
+            params.append('staPassword', pwField.value);
+            // Marker: leeres Passwort bedeutet "vorhandenes beibehalten"
+            params.append('staPasswordKeep', pwField.value === '' ? '1' : '0');
             params.append('staDhcp', document.getElementById('staDhcp').checked ? '1' : '0');
             params.append('staIP', document.getElementById('staIP').value);
             params.append('staGateway', document.getElementById('staGateway').value);
@@ -2071,9 +2077,12 @@
             params.append('ntpEnabled', document.getElementById('ntpEnabled').checked ? '1' : '0');
             params.append('ntpServer', document.getElementById('ntpServer').value);
 
+            wifiSaveInFlight = true;
             fetch('/wifi/save?' + params.toString())
                 .then(response => response.text())
                 .then(data => {
+                    wifiSaveInFlight = false;
+                    clearWifiFormDirty();
                     // Bestätigungsdialog für Neustart
                     if (confirm('✓ WiFi-Konfiguration gespeichert!\n\nMöchten Sie das Gerät jetzt neu starten?\n\n(Ohne Neustart werden die WiFi-Einstellungen nicht aktiv)')) {
                         // Neustart durchführen
@@ -2093,10 +2102,11 @@
                                 }, 10000);
                             });
                     } else {
-                        loadWiFiConfig();  // Reload ohne Neustart
+                        loadWiFiConfig(true);  // Reload ohne Neustart
                     }
                 })
                 .catch(error => {
+                    wifiSaveInFlight = false;
                     alert('❌ Fehler beim Speichern: ' + error);
                 });
         }
@@ -2111,6 +2121,14 @@
         let userIsAdjusting = false;
         let adjustingTimeout = null;
         let brightnessectionOpen = false;
+
+        // Dirty-Flag und Sektion-Tracking für sichere Polls
+        const sectionOpen = {};
+        let wifiFormDirty = false;
+        let wifiSaveInFlight = false;
+
+        function markWifiFormDirty() { wifiFormDirty = true; }
+        function clearWifiFormDirty() { wifiFormDirty = false; }
 
         function setUserAdjusting() {
             userIsAdjusting = true;
@@ -2443,8 +2461,22 @@
             setInterval(updateBrowserTime, 1000);
             setInterval(fetchEspTime, 5000);
             setInterval(loadOTAInfo, 60000);
-            setInterval(loadWiFiConfig, 30000);
-            setInterval(loadAutoBrightnessConfig, 2000);  // Auto-Brightness alle 2s aktualisieren
+            // WiFi-/Autobrightness-Polls laufen nur, wenn die jeweilige Sektion offen ist.
+            // Form-Felder werden zudem nur überschrieben, wenn der Benutzer sie nicht aktiv bearbeitet.
+            setInterval(() => { if (sectionOpen['section-wifi']) loadWiFiConfig(false); }, 15000);
+            setInterval(() => { if (sectionOpen['section-autobrightness']) loadAutoBrightnessConfig(); }, 2000);
+
+            // Form-Dirty-Tracking für WiFi-/NTP-Felder
+            const wifiFields = ['staEnabled','staSsid','staSsidManual','staPassword','staDhcp',
+                                'staIP','staGateway','staSubnet','staDNS','ntpEnabled','ntpServer'];
+            wifiFields.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('input', markWifiFormDirty);
+                el.addEventListener('change', markWifiFormDirty);
+                el.addEventListener('focus', () => { inputHasFocus = true; });
+                el.addEventListener('blur', () => { inputHasFocus = false; });
+            });
 
             // Event Listener für DHCP-Checkbox
             document.getElementById('staDhcp').addEventListener('change', toggleStaticIPFields);
