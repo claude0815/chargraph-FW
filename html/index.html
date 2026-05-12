@@ -1402,11 +1402,28 @@
         const CHARSOAP_ALLOWED = /^[A-Za-z0-9\-]*$/;
 
         function normalizeCharsoap(raw) {
-            // Whitespace/Newlines entfernen, dann Umlaute auf Kleinbuchstaben mappen.
-            // Reihenfolge wichtig: erst toUpperCase (macht ü→Ü), dann gezielt ersetzen.
-            let text = raw.replace(/\s/g, '').toUpperCase();
-            text = text.replace(/Ä/g, 'a').replace(/Ö/g, 'o').replace(/Ü/g, 'u');
-            return text;
+            // Idempotent: kleines a/o/u sind Umlaut-Marker (Ä→a, Ö→o, Ü→u) und
+            // bleiben kleingeschrieben. Alle anderen Buchstaben werden gross.
+            // Mehrfaches Anwenden veraendert das Ergebnis nicht.
+            // WICHTIG: Backend-Validator sucht u.a. nach "FuNF" (siehe
+            // CharGraphTimeLogic/Constants.cpp), die Kleinschreibung darf
+            // also nicht verloren gehen.
+            const stripped = raw.replace(/\s/g, '');
+            let out = '';
+            for (const ch of stripped) {
+                switch (ch) {
+                    case 'ä': case 'Ä': out += 'a'; break;
+                    case 'ö': case 'Ö': out += 'o'; break;
+                    case 'ü': case 'Ü': out += 'u'; break;
+                    case 'a': case 'o': case 'u':
+                        out += ch;  // bereits konvertierter Umlaut – nicht anfassen
+                        break;
+                    default:
+                        out += ch.toUpperCase();
+                        break;
+                }
+            }
+            return out;
         }
 
         function validateCharsoap() {
