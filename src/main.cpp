@@ -2273,11 +2273,12 @@ void setupWiFiStation() {
         DEBUG_PRINTLN("Verwende DHCP");
     }
 
-    // Disconnect-Reason als Klartext loggen (hilfreich fuer Enterprise-Debug)
+    // Disconnect-Reason als Klartext loggen (hilfreich fuer Enterprise-Debug).
+    // Achtung: laeuft im SDK-(sys-)Context – KEIN yield/flush hier, sonst Panic.
     s_disconnectHandler = WiFi.onStationModeDisconnected(
         [](const WiFiEventStationModeDisconnected& evt) {
-            DEBUG_PRINTF("✗ WiFi disconnect: reason=%u (%s)\n",
-                         evt.reason, wifiDisconnectReasonName(evt.reason));
+            Serial.printf("\xE2\x9C\x97 WiFi disconnect: reason=%u (%s)\n",
+                          evt.reason, wifiDisconnectReasonName(evt.reason));
         });
 
     // Auto-Reconnect aktivieren
