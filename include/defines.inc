@@ -96,11 +96,18 @@
 #define ADDR_MINUTE_LEDS_SET      418    // Flag: Custom Minute LEDs (1 byte)
 #define ADDR_SPECIAL_WORD_INTERVAL 419   // Anzeigeintervall in Minuten (1 byte)
 
+// ════════════════════════════════════════════════════════════════
+// WPA2-ENTERPRISE (PEAP/MS-CHAPv2) ADRESSEN (frei: 485-511)
+// ════════════════════════════════════════════════════════════════
+#define ADDR_STA_ENTERPRISE_ENABLED  420   // Enterprise aktiv (1 byte, Magic)
+#define ADDR_STA_ENTERPRISE_IDENTITY 421   // Identity / Benutzername (64 bytes)
+
 #define STA_ENABLED_MAGIC       0xAA
 #define NTP_ENABLED_MAGIC       0xBB
 #define AUTO_BRIGHTNESS_MAGIC   0xCC
 #define SPECIAL_WORD_MAGIC      0xDD
 #define MINUTE_LEDS_MAGIC       0xEE
+#define STA_ENTERPRISE_MAGIC    0xE1
 
 #define RUNNING_FLAG_MAGIC 0x42    // Magic Byte
 #define MAGIC_BYTE_INIT    0x55

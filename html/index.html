@@ -748,6 +748,24 @@
         </div>
 
         <div class="form-group">
+            <label>
+                <input type="checkbox" id="staEnterprise" style="width: auto; margin-right: 10px;">
+                WPA2-Enterprise (PEAP/MS-CHAPv2)
+            </label>
+            <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                Aktivieren f&uuml;r Firmen-/Schul-WLANs. Server-Zertifikate werden
+                <strong>nicht</strong> verifiziert.
+            </div>
+        </div>
+
+        <div id="enterpriseConfig" class="form-group" style="display: none;">
+            <label>Identity (Benutzername):</label>
+            <input type="text" id="staIdentity" maxlength="63"
+                   placeholder="z.B. max.muster@firma.de"
+                   style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box;">
+        </div>
+
+        <div class="form-group">
             <label>WLAN-Passwort:</label>
             <div style="position: relative; display: inline-block; width: 100%;">
                 <input type="password" id="staPassword" placeholder="********" maxlength="63"
@@ -1858,6 +1876,9 @@
                     // Form-Felder NUR aktualisieren, wenn der Benutzer sie nicht bearbeitet
                     if (allowFormUpdate) {
                         document.getElementById('staEnabled').checked = data.staEnabled;
+                        document.getElementById('staEnterprise').checked = !!data.staEnterprise;
+                        document.getElementById('staIdentity').value = data.staIdentity || '';
+                        toggleEnterpriseFields();
                         // Passwort: Backend liefert Platzhalter, falls bereits eines gespeichert ist
                         document.getElementById('staPassword').value = data.staPassword || '';
                         document.getElementById('staPassword').placeholder =
@@ -2045,6 +2066,11 @@
             document.getElementById('staticIPConfig').style.display = isDhcp ? 'none' : 'block';
         }
 
+        function toggleEnterpriseFields() {
+            const enabled = document.getElementById('staEnterprise').checked;
+            document.getElementById('enterpriseConfig').style.display = enabled ? 'block' : 'none';
+        }
+
         function saveWiFiConfig() {
             const params = new URLSearchParams();
 
@@ -2065,6 +2091,9 @@
 
             params.append('staEnabled', document.getElementById('staEnabled').checked ? '1' : '0');
             params.append('staSsid', ssidValue);
+            const enterpriseChecked = document.getElementById('staEnterprise').checked;
+            params.append('staEnterprise', enterpriseChecked ? '1' : '0');
+            params.append('staIdentity', document.getElementById('staIdentity').value);
             const pwField = document.getElementById('staPassword');
             params.append('staPassword', pwField.value);
             // Marker: leeres Passwort bedeutet "vorhandenes beibehalten"
@@ -2468,7 +2497,8 @@
 
             // Form-Dirty-Tracking für WiFi-/NTP-Felder
             const wifiFields = ['staEnabled','staSsid','staSsidManual','staPassword','staDhcp',
-                                'staIP','staGateway','staSubnet','staDNS','ntpEnabled','ntpServer'];
+                                'staIP','staGateway','staSubnet','staDNS','ntpEnabled','ntpServer',
+                                'staEnterprise','staIdentity'];
             wifiFields.forEach(id => {
                 const el = document.getElementById(id);
                 if (!el) return;
@@ -2480,6 +2510,8 @@
 
             // Event Listener für DHCP-Checkbox
             document.getElementById('staDhcp').addEventListener('change', toggleStaticIPFields);
+            // Event Listener für Enterprise-Toggle
+            document.getElementById('staEnterprise').addEventListener('change', toggleEnterpriseFields);
 
             const now = new Date();
             const offset = now.getTimezoneOffset() * 60000;

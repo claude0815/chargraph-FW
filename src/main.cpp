@@ -622,8 +622,21 @@ void loadWiFiStationConfig() {
         staDNS[3] = EEPROM.read(ADDR_STA_DNS + 3);
     }
 
+    // WPA2-Enterprise (PEAP/MS-CHAPv2)
+    staEnterprise = (EEPROM.read(ADDR_STA_ENTERPRISE_ENABLED) == STA_ENTERPRISE_MAGIC);
+    for (int i = 0; i < 64; i++) {
+        byte c = EEPROM.read(ADDR_STA_ENTERPRISE_IDENTITY + i);
+        if (c == 0 || c == 0xFF) {
+            staIdentity[i] = '\0';
+            break;
+        }
+        staIdentity[i] = c;
+    }
+    staIdentity[63] = '\0';
+
     DEBUG_PRINTF("✓ WiFi Station SSID: %s\n", staSsid);
     DEBUG_PRINTF("  DHCP: %s\n", staDhcp ? "Ja" : "Nein");
+    DEBUG_PRINTF("  Enterprise: %s\n", staEnterprise ? "Ja" : "Nein");
     if (!staDhcp) {
         DEBUG_PRINTF("  IP: %s\n", staIP.toString().c_str());
         DEBUG_PRINTF("  Gateway: %s\n", staGateway.toString().c_str());
@@ -669,6 +682,13 @@ void saveWiFiStationConfig() {
     EEPROM.write(ADDR_STA_DNS + 1, staDNS[1]);
     EEPROM.write(ADDR_STA_DNS + 2, staDNS[2]);
     EEPROM.write(ADDR_STA_DNS + 3, staDNS[3]);
+
+    // WPA2-Enterprise
+    EEPROM.write(ADDR_STA_ENTERPRISE_ENABLED, staEnterprise ? STA_ENTERPRISE_MAGIC : 0);
+    for (int i = 0; i < 64; i++) {
+        EEPROM.write(ADDR_STA_ENTERPRISE_IDENTITY + i, staIdentity[i]);
+        if (staIdentity[i] == '\0') break;
+    }
 
     EEPROM.commit();
     DEBUG_PRINTLN("✓ WiFi Station Config gespeichert");
@@ -1732,6 +1752,10 @@ void handleGetWiFiConfig() {
     // "bestehendes Passwort beibehalten" interpretiert (staPasswordKeep=1).
     json += "\"staPassword\":\"\",";
     json += "\"staPasswordSet\":" + String(staPassword[0] != '\0' ? "true" : "false") + ",";
+    // WPA2-Enterprise (PEAP/MS-CHAPv2): Identity wird gespeichert und ausgeliefert,
+    // sie ist nicht geheim (wird auf Funk-Ebene ohnehin sichtbar uebertragen).
+    json += "\"staEnterprise\":" + String(staEnterprise ? "true" : "false") + ",";
+    json += "\"staIdentity\":\"" + String(staIdentity) + "\",";
     json += "\"staDhcp\":" + String(staDhcp ? "true" : "false") + ",";
     json += "\"staIP\":\"" + staIP.toString() + "\",";
     json += "\"staGateway\":\"" + staGateway.toString() + "\",";
@@ -1783,6 +1807,18 @@ void handleSaveWiFiConfig() {
             staPassword[63] = '\0';
             changed = true;
         }
+    }
+
+    // WPA2-Enterprise
+    if (server.hasArg("staEnterprise")) {
+        staEnterprise = (server.arg("staEnterprise") == "true" || server.arg("staEnterprise") == "1");
+        changed = true;
+    }
+    if (server.hasArg("staIdentity")) {
+        String newIdentity = server.arg("staIdentity");
+        strncpy(staIdentity, newIdentity.c_str(), 63);
+        staIdentity[63] = '\0';
+        changed = true;
     }
 
     // DHCP
@@ -2196,7 +2232,35 @@ void setupWiFiStation() {
     WiFi.persistent(false);  // Kein Flash-Write bei jedem Connect
 
     // Verbindung starten
-    WiFi.begin(staSsid, staPassword);
+    if (staEnterprise && strlen(staIdentity) > 0) {
+        DEBUG_PRINTLN("→ WPA2-Enterprise (PEAP/MS-CHAPv2)");
+        DEBUG_PRINTF("  Identity: %s\n", staIdentity);
+
+        // SSID via SDK setzen (kein PSK, das uebernimmt der Enterprise-Layer)
+        struct station_config conf;
+        memset(&conf, 0, sizeof(conf));
+        strncpy((char*)conf.ssid, staSsid, sizeof(conf.ssid));
+        wifi_station_set_config(&conf);
+
+        // Vorherige Enterprise-Konfiguration leeren (idempotent über Soft-Resets)
+        wifi_station_clear_cert_key();
+        wifi_station_clear_enterprise_ca_cert();
+        wifi_station_clear_enterprise_identity();
+        wifi_station_clear_enterprise_username();
+        wifi_station_clear_enterprise_password();
+
+        // Enterprise-Auth aktivieren; ohne CA-Cert wird der RADIUS-Server
+        // NICHT verifiziert (bewusste Entscheidung – siehe vars.inc).
+        wifi_station_set_wpa2_enterprise_auth(1);
+
+        wifi_station_set_enterprise_identity((uint8_t*)staIdentity, strlen(staIdentity));
+        wifi_station_set_enterprise_username((uint8_t*)staIdentity, strlen(staIdentity));
+        wifi_station_set_enterprise_password((uint8_t*)staPassword, strlen(staPassword));
+
+        wifi_station_connect();
+    } else {
+        WiFi.begin(staSsid, staPassword);
+    }
 
     // Warte max. 10 Sekunden auf Verbindung
     DEBUG_PRINT("Verbinde");

@@ -12,6 +12,9 @@
   #include <time.h>  // NTP support
 
   #include <user_interface.h>  // Für rst_info
+  extern "C" {
+    #include <wpa2_enterprise.h>  // PEAP / MS-CHAPv2 Auth
+  }
 
   #include <extern.inc>
   #include <defines.inc>

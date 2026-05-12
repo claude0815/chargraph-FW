@@ -50,6 +50,12 @@ IPAddress staGateway(0, 0, 0, 0);
 IPAddress staSubnet(255, 255, 255, 0);
 IPAddress staDNS(0, 0, 0, 0);
 
+// WPA2-Enterprise (PEAP/MS-CHAPv2): wenn staEnterprise=true, wird staIdentity
+// als outer & inner Identity verwendet und staPassword als MS-CHAPv2-Passwort.
+// Server-Zertifikate werden bewusst nicht verifiziert (kein CA-Cert gesetzt).
+bool staEnterprise = false;
+char staIdentity[64] = "";
+
 // ════════════════════════════════════════════════════════════════
 // NTP VARIABLEN
 // ════════════════════════════════════════════════════════════════
