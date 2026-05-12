@@ -2325,23 +2325,27 @@ void setupWiFiStation() {
         strncpy((char*)conf.ssid, staSsid, sizeof(conf.ssid));
         wifi_station_set_config(&conf);
 
-        // Vorherige Enterprise-Konfiguration leeren (idempotent über Soft-Resets)
-        wifi_station_clear_cert_key();
-        wifi_station_clear_enterprise_ca_cert();
-        wifi_station_clear_enterprise_identity();
-        wifi_station_clear_enterprise_username();
-        wifi_station_clear_enterprise_password();
-
         // Enterprise-Auth aktivieren; ohne CA-Cert wird der RADIUS-Server
         // NICHT verifiziert (bewusste Entscheidung – siehe vars.inc).
+        // Bewusst KEINE clear_*-Calls vorab: das Espressif-SDK haelt sonst
+        // einen leeren outer identity-String fest, statt auf den eingebauten
+        // Default ("anonymous@espressif.com") zurueckzufallen, was manche
+        // RADIUS-Server (Cisco ISE) als ungueltig zurueckweisen.
         wifi_station_set_wpa2_enterprise_auth(1);
 
-        // Outer Identity (anonymous identity): konfigurierbar, Default
-        // "anonymous". Manche RADIUS-Setups wollen einen Realm dahinter
-        // (z.B. "anonymous@schule.de"), andere einen leeren String. Wer das
-        // Feld leer laesst, sendet wirklich leer.
-        DEBUG_PRINTF("  Outer:    %s\n", staAnonIdentity);
-        wifi_station_set_enterprise_identity((uint8_t*)staAnonIdentity, strlen(staAnonIdentity));
+        // Outer Identity (anonymous identity): konfigurierbar.
+        // - Feld leer  -> set_enterprise_identity gar nicht aufrufen,
+        //                  ESP-SDK sendet dann seinen Default
+        //                  "anonymous@espressif.com" (valides user@realm).
+        // - "anonymous" -> reiner String ohne Realm.
+        // - "anonymous@schule.de" -> mit Realm, wie es viele Cisco-ISE-Setups
+        //                            erwarten.
+        if (strlen(staAnonIdentity) > 0) {
+            DEBUG_PRINTF("  Outer:    %s\n", staAnonIdentity);
+            wifi_station_set_enterprise_identity((uint8_t*)staAnonIdentity, strlen(staAnonIdentity));
+        } else {
+            DEBUG_PRINTLN("  Outer:    <SDK-Default 'anonymous@espressif.com'>");
+        }
         wifi_station_set_enterprise_username((uint8_t*)staIdentity, strlen(staIdentity));
         wifi_station_set_enterprise_password((uint8_t*)staPassword, strlen(staPassword));
 
