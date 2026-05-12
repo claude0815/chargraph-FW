@@ -2307,12 +2307,15 @@ void setupWiFiStation() {
         // NICHT verifiziert (bewusste Entscheidung – siehe vars.inc).
         wifi_station_set_wpa2_enterprise_auth(1);
 
-        // Outer Identity (anonymous identity) bewusst LEER lassen – das ist die
-        // Vorgabe vieler Schul-/Firmen-RADIUS-Konfigurationen (auch in deren
-        // Linux-Anleitungen: "Anonymous identity: leer lassen"). Der echte
-        // Username wird ausschliesslich in Phase 2 (im TLS-Tunnel) als
-        // MS-CHAPv2-Identitaet uebertragen.
-        wifi_station_set_enterprise_identity((uint8_t*)"", 0);
+        // Outer Identity (anonymous identity): viele RADIUS-Server (insb. Cisco
+        // ISE) verlangen einen non-empty outer identity. Wenn auf einem
+        // funktionierenden Smartphone "anonymous" als anonyme Identitaet
+        // konfiguriert ist, muss der ESP exakt das Gleiche senden – der
+        // Linux-NetworkManager mappt "leer lassen" intern oft auf "anonymous".
+        // Der echte Benutzername wird ausschliesslich in Phase 2 (im TLS-Tunnel)
+        // als MS-CHAPv2-Identitaet uebertragen.
+        static const char kOuterIdentity[] = "anonymous";
+        wifi_station_set_enterprise_identity((uint8_t*)kOuterIdentity, sizeof(kOuterIdentity) - 1);
         wifi_station_set_enterprise_username((uint8_t*)staIdentity, strlen(staIdentity));
         wifi_station_set_enterprise_password((uint8_t*)staPassword, strlen(staPassword));
 
