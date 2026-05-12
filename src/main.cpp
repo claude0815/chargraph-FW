@@ -19,12 +19,12 @@ void initCharsoap(char *_charsoap) {
     // Konvertiert UTF-8 Umlaute in charsoap zu ASCII in-place
     // charsoap muss bereits gefüllt sein (von strcpy_P)
 
-    char temp[COLS * ROWS * 2];  // Temporärer Buffer für Konvertierung
+    char temp[CHARSOAP_LEN * 2 + 1];  // Temporärer Buffer für Konvertierung
     int writePos = 0;
     int readPos = 0;
     int sourceLen = strlen(_charsoap);
 
-    while (readPos < sourceLen && writePos < (ROWS * COLS)) {
+    while (readPos < sourceLen && writePos < CHARSOAP_LEN) {
         unsigned char c = _charsoap[readPos];
 
         // UTF-8 Umlaute erkennen und zu lowercase konvertieren
@@ -36,7 +36,7 @@ void initCharsoap(char *_charsoap) {
                 case 0x9C: temp[writePos++] = 'u'; break;  // Ü → u
                 default:
                     temp[writePos++] = c;
-                    if (writePos < (ROWS * COLS)) temp[writePos++] = next;
+                    if (writePos < CHARSOAP_LEN) temp[writePos++] = next;
                     break;
             }
             readPos += 2;
@@ -74,7 +74,7 @@ void loadCharsoap() {
         int writePos = 0;
         int readPos = 0;
 
-        while (readPos < rawLen && writePos < (ROWS * COLS)) {
+        while (readPos < rawLen && writePos < CHARSOAP_LEN) {
             unsigned char c = rawData[readPos];
 
             if (c == 0xC3 && readPos + 1 < rawLen) {
@@ -89,7 +89,7 @@ void loadCharsoap() {
                     default:
                         DEBUG_PRINTF("⚠ Unbekannt: 0xC3 0x%02X\n", next);
                         charsoap[writePos++] = c;
-                        if (writePos < (COLS * ROWS))
+                        if (writePos < CHARSOAP_LEN)
                           charsoap[writePos++] = next;
                         break;
                 }
@@ -111,13 +111,13 @@ void loadCharsoap() {
 
         DEBUG_PRINTF("Konvertierte Länge: %d Zeichen\n", writePos);
 
-        if (writePos == (COLS * (ROWS-1))) {
+        if (writePos == CHARSOAP_LEN) {
             DEBUG_PRINTLN("✓ Charsoap geladen (UTF-8 bereinigt)");
             DEBUG_PRINTLN(charsoap);
 
-            if (rawLen != (COLS * ROWS)) {
+            if (rawLen != CHARSOAP_LEN) {
                 DEBUG_PRINTLN("→ Speichere bereinigte Version...");
-                for (int i = 0; i < (COLS * ROWS); i++) {
+                for (int i = 0; i < CHARSOAP_LEN; i++) {
                     EEPROM.write(ADDR_CHARSOAP + i, charsoap[i]);
                 }
                 EEPROM.commit();
@@ -138,11 +138,11 @@ void loadCharsoap() {
 
 void saveCharsoap(const char* newCharsoap)
 {
-    char cleaned[uint8_t (ROWS * COLS)+1];
+    char cleaned[CHARSOAP_LEN + 1];
     uint16_t writePos = 0;
     uint16_t readPos = 0;
 
-    while (readPos < (uint16_t)strlen(newCharsoap) && writePos < (ROWS * COLS)) {
+    while (readPos < (uint16_t)strlen(newCharsoap) && writePos < CHARSOAP_LEN) {
         unsigned char c = newCharsoap[readPos];
 
         if (c == 0xC3 && readPos + 1 < (uint16_t)strlen(newCharsoap)) {
@@ -170,9 +170,13 @@ void saveCharsoap(const char* newCharsoap)
 
     cleaned[writePos] = '\0';
 
-    if (writePos != (ROWS * COLS)) return;
+    if (writePos != CHARSOAP_LEN) {
+        DEBUG_PRINTF("❌ saveCharsoap: ungueltige Laenge %u (erwartet %u)\n",
+                     writePos, (unsigned)CHARSOAP_LEN);
+        return;
+    }
 
-    for (uint8_t i = 0; i < uint8_t (ROWS * COLS); i++) {
+    for (uint16_t i = 0; i < CHARSOAP_LEN; i++) {
         EEPROM.write(ADDR_CHARSOAP + i, cleaned[i]);
     }
     EEPROM.write(ADDR_CHARSOAP_SET, 1);
@@ -446,7 +450,7 @@ void loadConfig() {
         DEBUG_PRINTLN("→ Speichere DEFAULT_CHARSOAP ins EEPROM...");
 
         // Ins EEPROM schreiben
-        for (int i = 0; i < (COLS * ROWS); i++) {
+        for (int i = 0; i < CHARSOAP_LEN; i++) {
             EEPROM.write(ADDR_CHARSOAP + i, charsoap[i]);
         }
         EEPROM.write(ADDR_CHARSOAP_SET, 1);
@@ -1320,33 +1324,38 @@ void handleSave() {
         unsigned long utcTimestamp = server.arg("timestamp").toInt();
         int timezoneOffset = server.hasArg("tzoffset") ? server.arg("tzoffset").toInt() : 0;
         unsigned long clientTime = utcTimestamp - timezoneOffset;
-        
-        if (lastSyncTime > 0 && bootTime > 0) {
-            unsigned long espTime = bootTime + (millis() / 1000);
-            unsigned long timeSinceSync = clientTime - lastSyncTime;
-            
-            if (timeSinceSync > 3600) {
-                long drift = espTime - clientTime;
-                float daysElapsed = timeSinceSync / 86400.0;
-                float newDriftRate = drift / daysElapsed;
-                
-                if (syncCount > 0) {
-                    driftRate = (driftRate * syncCount + newDriftRate) / (syncCount + 1);
-                } else {
-                    driftRate = newDriftRate;
+
+        // timestamp=0 bedeutet "Zeit nicht aendern" – wird vom Frontend bei
+        // saveColors() / saveCharsoap() gesendet, um Drift-Berechnung, bootTime
+        // und RTC nicht zu zerschiessen.
+        if (utcTimestamp != 0) {
+            if (lastSyncTime > 0 && bootTime > 0) {
+                unsigned long espTime = bootTime + (millis() / 1000);
+                unsigned long timeSinceSync = clientTime - lastSyncTime;
+
+                if (timeSinceSync > 3600) {
+                    long drift = espTime - clientTime;
+                    float daysElapsed = timeSinceSync / 86400.0;
+                    float newDriftRate = drift / daysElapsed;
+
+                    if (syncCount > 0) {
+                        driftRate = (driftRate * syncCount + newDriftRate) / (syncCount + 1);
+                    } else {
+                        driftRate = newDriftRate;
+                    }
+
+                    syncCount++;
+                    saveDriftRate();
                 }
-                
-                syncCount++;
-                saveDriftRate();
             }
-        }
-        
-        bootTime = clientTime - (millis() / 1000);
-        lastSyncTime = clientTime;
-        
-        if (rtc.begin()) {
-            DateTime newTime(clientTime);
-            rtc.adjust(newTime);
+
+            bootTime = clientTime - (millis() / 1000);
+            lastSyncTime = clientTime;
+
+            if (rtc.begin()) {
+                DateTime newTime(clientTime);
+                rtc.adjust(newTime);
+            }
         }
         
         normalColor.r = server.arg("nr").toInt();
@@ -1361,9 +1370,14 @@ void handleSave() {
 
         if (server.hasArg("charsoap")) {
             String newCharsoap = server.arg("charsoap");
-            newCharsoap.toUpperCase();
-            if (newCharsoap.length() == (ROWS * COLS)) {
+            // Achtung: nicht .toUpperCase() – Umlaute werden vom Frontend bereits
+            // in Kleinbuchstaben (a/o/u) umgewandelt; ein zweites Uppercasen wuerde
+            // diese Information verlieren.
+            if (newCharsoap.length() == CHARSOAP_LEN) {
                 saveCharsoap(newCharsoap.c_str());
+            } else if (newCharsoap.length() > 0) {
+                DEBUG_PRINTF("❌ handleSave: charsoap Laenge %u (erwartet %u)\n",
+                             newCharsoap.length(), (unsigned)CHARSOAP_LEN);
             }
         }
 

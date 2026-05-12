@@ -10,6 +10,9 @@
   #define NUM_LEDS 121
   #define COLS 11
   #define ROWS 11
+  // Charsoap belegt nur die ersten (ROWS-1) Zeilen (die letzte Zeile sind die
+  // Minuten-LEDs), also 10*11 = 110 sichtbare Buchstaben.
+  #define CHARSOAP_LEN (COLS * (ROWS - 1))
 
   #define MAXWORDS 3 //Anzahl Spezialwörter
   #define SPECIAL_WORD_LENGTH (COLS+2)
