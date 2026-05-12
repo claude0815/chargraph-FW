@@ -51,10 +51,14 @@ IPAddress staSubnet(255, 255, 255, 0);
 IPAddress staDNS(0, 0, 0, 0);
 
 // WPA2-Enterprise (PEAP/MS-CHAPv2): wenn staEnterprise=true, wird staIdentity
-// als outer & inner Identity verwendet und staPassword als MS-CHAPv2-Passwort.
+// als inner Identity (= Benutzername) verwendet und staPassword als
+// MS-CHAPv2-Passwort. staAnonIdentity ist die outer (anonymous) Identity, die
+// im Klartext über die Luft geht – Default "anonymous", manche RADIUS-Setups
+// wollen einen Realm dran (z.B. "anonymous@schule.de").
 // Server-Zertifikate werden bewusst nicht verifiziert (kein CA-Cert gesetzt).
 bool staEnterprise = false;
 char staIdentity[64] = "";
+char staAnonIdentity[64] = "anonymous";
 
 // ════════════════════════════════════════════════════════════════
 // NTP VARIABLEN

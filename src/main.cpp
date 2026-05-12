@@ -638,6 +638,24 @@ void loadWiFiStationConfig() {
     }
     staIdentity[63] = '\0';
 
+    // Outer/Anonymous Identity laden; Fallback Default = "anonymous"
+    bool anonFound = false;
+    for (int i = 0; i < 64; i++) {
+        byte c = EEPROM.read(ADDR_STA_ENTERPRISE_ANON_ID + i);
+        if (c == 0 || c == 0xFF) {
+            staAnonIdentity[i] = '\0';
+            if (i > 0) anonFound = true;
+            break;
+        }
+        staAnonIdentity[i] = c;
+        anonFound = true;
+    }
+    staAnonIdentity[63] = '\0';
+    if (!anonFound) {
+        strncpy(staAnonIdentity, "anonymous", sizeof(staAnonIdentity) - 1);
+        staAnonIdentity[sizeof(staAnonIdentity) - 1] = '\0';
+    }
+
     DEBUG_PRINTF("✓ WiFi Station SSID: %s\n", staSsid);
     DEBUG_PRINTF("  DHCP: %s\n", staDhcp ? "Ja" : "Nein");
     DEBUG_PRINTF("  Enterprise: %s\n", staEnterprise ? "Ja" : "Nein");
@@ -692,6 +710,10 @@ void saveWiFiStationConfig() {
     for (int i = 0; i < 64; i++) {
         EEPROM.write(ADDR_STA_ENTERPRISE_IDENTITY + i, staIdentity[i]);
         if (staIdentity[i] == '\0') break;
+    }
+    for (int i = 0; i < 64; i++) {
+        EEPROM.write(ADDR_STA_ENTERPRISE_ANON_ID + i, staAnonIdentity[i]);
+        if (staAnonIdentity[i] == '\0') break;
     }
 
     EEPROM.commit();
@@ -1770,6 +1792,7 @@ void handleGetWiFiConfig() {
     // sie ist nicht geheim (wird auf Funk-Ebene ohnehin sichtbar uebertragen).
     json += "\"staEnterprise\":" + String(staEnterprise ? "true" : "false") + ",";
     json += "\"staIdentity\":\"" + String(staIdentity) + "\",";
+    json += "\"staAnonIdentity\":\"" + String(staAnonIdentity) + "\",";
     json += "\"staDhcp\":" + String(staDhcp ? "true" : "false") + ",";
     json += "\"staIP\":\"" + staIP.toString() + "\",";
     json += "\"staGateway\":\"" + staGateway.toString() + "\",";
@@ -1832,6 +1855,12 @@ void handleSaveWiFiConfig() {
         String newIdentity = server.arg("staIdentity");
         strncpy(staIdentity, newIdentity.c_str(), 63);
         staIdentity[63] = '\0';
+        changed = true;
+    }
+    if (server.hasArg("staAnonIdentity")) {
+        String newAnon = server.arg("staAnonIdentity");
+        strncpy(staAnonIdentity, newAnon.c_str(), 63);
+        staAnonIdentity[63] = '\0';
         changed = true;
     }
 
@@ -2307,15 +2336,12 @@ void setupWiFiStation() {
         // NICHT verifiziert (bewusste Entscheidung – siehe vars.inc).
         wifi_station_set_wpa2_enterprise_auth(1);
 
-        // Outer Identity (anonymous identity): viele RADIUS-Server (insb. Cisco
-        // ISE) verlangen einen non-empty outer identity. Wenn auf einem
-        // funktionierenden Smartphone "anonymous" als anonyme Identitaet
-        // konfiguriert ist, muss der ESP exakt das Gleiche senden – der
-        // Linux-NetworkManager mappt "leer lassen" intern oft auf "anonymous".
-        // Der echte Benutzername wird ausschliesslich in Phase 2 (im TLS-Tunnel)
-        // als MS-CHAPv2-Identitaet uebertragen.
-        static const char kOuterIdentity[] = "anonymous";
-        wifi_station_set_enterprise_identity((uint8_t*)kOuterIdentity, sizeof(kOuterIdentity) - 1);
+        // Outer Identity (anonymous identity): konfigurierbar, Default
+        // "anonymous". Manche RADIUS-Setups wollen einen Realm dahinter
+        // (z.B. "anonymous@schule.de"), andere einen leeren String. Wer das
+        // Feld leer laesst, sendet wirklich leer.
+        DEBUG_PRINTF("  Outer:    %s\n", staAnonIdentity);
+        wifi_station_set_enterprise_identity((uint8_t*)staAnonIdentity, strlen(staAnonIdentity));
         wifi_station_set_enterprise_username((uint8_t*)staIdentity, strlen(staIdentity));
         wifi_station_set_enterprise_password((uint8_t*)staPassword, strlen(staPassword));
 

@@ -758,11 +758,23 @@
             </div>
         </div>
 
-        <div id="enterpriseConfig" class="form-group" style="display: none;">
-            <label>Identity (Benutzername):</label>
-            <input type="text" id="staIdentity" maxlength="63"
-                   placeholder="z.B. max.muster@firma.de"
-                   style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box;">
+        <div id="enterpriseConfig" style="display: none;">
+            <div class="form-group">
+                <label>Identity (Benutzername):</label>
+                <input type="text" id="staIdentity" maxlength="63"
+                       placeholder="z.B. max.muster oder max.muster@firma.de"
+                       style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box;">
+            </div>
+            <div class="form-group">
+                <label>Anonymous Identity (Outer):</label>
+                <input type="text" id="staAnonIdentity" maxlength="63"
+                       placeholder="anonymous"
+                       style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box;">
+                <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                    Wird im Klartext &uuml;bertragen. Default <code>anonymous</code>; manche
+                    RADIUS-Server wollen einen Realm dahinter (z.B. <code>anonymous@schule.de</code>).
+                </div>
+            </div>
         </div>
 
         <div class="form-group">
@@ -1895,6 +1907,9 @@
                         document.getElementById('staEnabled').checked = data.staEnabled;
                         document.getElementById('staEnterprise').checked = !!data.staEnterprise;
                         document.getElementById('staIdentity').value = data.staIdentity || '';
+                        document.getElementById('staAnonIdentity').value =
+                            (data.staAnonIdentity !== undefined && data.staAnonIdentity !== null)
+                                ? data.staAnonIdentity : 'anonymous';
                         toggleEnterpriseFields();
                         // Passwort: Backend liefert Platzhalter, falls bereits eines gespeichert ist
                         document.getElementById('staPassword').value = data.staPassword || '';
@@ -2111,6 +2126,7 @@
             const enterpriseChecked = document.getElementById('staEnterprise').checked;
             params.append('staEnterprise', enterpriseChecked ? '1' : '0');
             params.append('staIdentity', document.getElementById('staIdentity').value);
+            params.append('staAnonIdentity', document.getElementById('staAnonIdentity').value);
             const pwField = document.getElementById('staPassword');
             params.append('staPassword', pwField.value);
             // Marker: leeres Passwort bedeutet "vorhandenes beibehalten"
@@ -2515,7 +2531,7 @@
             // Form-Dirty-Tracking für WiFi-/NTP-Felder
             const wifiFields = ['staEnabled','staSsid','staSsidManual','staPassword','staDhcp',
                                 'staIP','staGateway','staSubnet','staDNS','ntpEnabled','ntpServer',
-                                'staEnterprise','staIdentity'];
+                                'staEnterprise','staIdentity','staAnonIdentity'];
             wifiFields.forEach(id => {
                 const el = document.getElementById(id);
                 if (!el) return;

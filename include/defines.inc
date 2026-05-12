@@ -29,7 +29,7 @@
 // ════════════════════════════════════════════════════════════════
 // EEPROM ADRESSEN
 // ════════════════════════════════════════════════════════════════
-#define EEPROM_SIZE         512
+#define EEPROM_SIZE         1024
 #define ADDR_BRIGHTNESS       0
 #define ADDR_COLOR_R          1
 #define ADDR_COLOR_G          2
@@ -100,7 +100,8 @@
 // WPA2-ENTERPRISE (PEAP/MS-CHAPv2) ADRESSEN (frei: 485-511)
 // ════════════════════════════════════════════════════════════════
 #define ADDR_STA_ENTERPRISE_ENABLED  420   // Enterprise aktiv (1 byte, Magic)
-#define ADDR_STA_ENTERPRISE_IDENTITY 421   // Identity / Benutzername (64 bytes)
+#define ADDR_STA_ENTERPRISE_IDENTITY 421   // Inner Identity / Benutzername (64 bytes)
+#define ADDR_STA_ENTERPRISE_ANON_ID  485   // Outer/Anonymous Identity (64 bytes)
 
 #define STA_ENABLED_MAGIC       0xAA
 #define NTP_ENABLED_MAGIC       0xBB
