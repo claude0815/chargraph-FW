@@ -2592,6 +2592,12 @@ void setup()
     Serial.begin(115200);
     while (!Serial) { }
     Serial.setDebugOutput(true);
+
+    // Internen os_printf-Stream des Espressif-NONOS-SDK auf UART0 freischalten.
+    // Standardmaessig stummgeschaltet; mit diesem Aufruf werden u.a. EAP-,
+    // TLS- und PHY-Logs sichtbar, was zur Diagnose von WPA2-Enterprise-
+    // Disconnects (reason=23) hilfreich ist.
+    system_set_os_print(1);
     delay(5000);
     Serial.setDebugOutput(false);
 
