@@ -793,6 +793,17 @@
         </div>
 
         <div class="form-group">
+            <label>Hostname (DHCP Option 12):</label>
+            <input type="text" id="staHostname" maxlength="63"
+                   placeholder="leer = SDK-Default (ESP_XXXXXX)"
+                   style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box;">
+            <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                Wird beim DHCP-Request mitgesendet. Manche RADIUS-Server bzw.
+                Cisco-ISE-Setups nutzen den Hostname fuer Endpoint-Profiling.
+            </div>
+        </div>
+
+        <div class="form-group">
             <label>
                 <input type="checkbox" id="staDhcp" checked style="width: auto; margin-right: 10px;">
                 DHCP verwenden (automatische IP-Adresse)
@@ -1910,6 +1921,7 @@
                         document.getElementById('staAnonIdentity').value =
                             (data.staAnonIdentity !== undefined && data.staAnonIdentity !== null)
                                 ? data.staAnonIdentity : 'anonymous';
+                        document.getElementById('staHostname').value = data.staHostname || '';
                         toggleEnterpriseFields();
                         // Passwort: Backend liefert Platzhalter, falls bereits eines gespeichert ist
                         document.getElementById('staPassword').value = data.staPassword || '';
@@ -2127,6 +2139,7 @@
             params.append('staEnterprise', enterpriseChecked ? '1' : '0');
             params.append('staIdentity', document.getElementById('staIdentity').value);
             params.append('staAnonIdentity', document.getElementById('staAnonIdentity').value);
+            params.append('staHostname', document.getElementById('staHostname').value);
             const pwField = document.getElementById('staPassword');
             params.append('staPassword', pwField.value);
             // Marker: leeres Passwort bedeutet "vorhandenes beibehalten"
@@ -2531,7 +2544,7 @@
             // Form-Dirty-Tracking für WiFi-/NTP-Felder
             const wifiFields = ['staEnabled','staSsid','staSsidManual','staPassword','staDhcp',
                                 'staIP','staGateway','staSubnet','staDNS','ntpEnabled','ntpServer',
-                                'staEnterprise','staIdentity','staAnonIdentity'];
+                                'staEnterprise','staIdentity','staAnonIdentity','staHostname'];
             wifiFields.forEach(id => {
                 const el = document.getElementById(id);
                 if (!el) return;

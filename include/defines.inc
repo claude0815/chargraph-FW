@@ -102,6 +102,7 @@
 #define ADDR_STA_ENTERPRISE_ENABLED  420   // Enterprise aktiv (1 byte, Magic)
 #define ADDR_STA_ENTERPRISE_IDENTITY 421   // Inner Identity / Benutzername (64 bytes)
 #define ADDR_STA_ENTERPRISE_ANON_ID  485   // Outer/Anonymous Identity (64 bytes)
+#define ADDR_STA_HOSTNAME            549   // DHCP-Hostname (64 bytes)
 
 #define STA_ENABLED_MAGIC       0xAA
 #define NTP_ENABLED_MAGIC       0xBB

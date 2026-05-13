@@ -60,6 +60,10 @@ bool staEnterprise = false;
 char staIdentity[64] = "";
 char staAnonIdentity[64] = "anonymous";
 
+// DHCP-Hostname (Option 12) – manche Cisco-ISE-Policies pruefen das beim
+// Endpoint-Profiling. Leer = SDK-Default ("ESP_<MAC-Suffix>").
+char staHostname[64] = "";
+
 // ════════════════════════════════════════════════════════════════
 // NTP VARIABLEN
 // ════════════════════════════════════════════════════════════════

@@ -656,6 +656,17 @@ void loadWiFiStationConfig() {
         staAnonIdentity[sizeof(staAnonIdentity) - 1] = '\0';
     }
 
+    // DHCP-Hostname laden (Default leer)
+    for (int i = 0; i < 64; i++) {
+        byte c = EEPROM.read(ADDR_STA_HOSTNAME + i);
+        if (c == 0 || c == 0xFF) {
+            staHostname[i] = '\0';
+            break;
+        }
+        staHostname[i] = c;
+    }
+    staHostname[63] = '\0';
+
     DEBUG_PRINTF("✓ WiFi Station SSID: %s\n", staSsid);
     DEBUG_PRINTF("  DHCP: %s\n", staDhcp ? "Ja" : "Nein");
     DEBUG_PRINTF("  Enterprise: %s\n", staEnterprise ? "Ja" : "Nein");
@@ -714,6 +725,10 @@ void saveWiFiStationConfig() {
     for (int i = 0; i < 64; i++) {
         EEPROM.write(ADDR_STA_ENTERPRISE_ANON_ID + i, staAnonIdentity[i]);
         if (staAnonIdentity[i] == '\0') break;
+    }
+    for (int i = 0; i < 64; i++) {
+        EEPROM.write(ADDR_STA_HOSTNAME + i, staHostname[i]);
+        if (staHostname[i] == '\0') break;
     }
 
     EEPROM.commit();
@@ -1793,6 +1808,7 @@ void handleGetWiFiConfig() {
     json += "\"staEnterprise\":" + String(staEnterprise ? "true" : "false") + ",";
     json += "\"staIdentity\":\"" + String(staIdentity) + "\",";
     json += "\"staAnonIdentity\":\"" + String(staAnonIdentity) + "\",";
+    json += "\"staHostname\":\"" + String(staHostname) + "\",";
     json += "\"staDhcp\":" + String(staDhcp ? "true" : "false") + ",";
     json += "\"staIP\":\"" + staIP.toString() + "\",";
     json += "\"staGateway\":\"" + staGateway.toString() + "\",";
@@ -1861,6 +1877,12 @@ void handleSaveWiFiConfig() {
         String newAnon = server.arg("staAnonIdentity");
         strncpy(staAnonIdentity, newAnon.c_str(), 63);
         staAnonIdentity[63] = '\0';
+        changed = true;
+    }
+    if (server.hasArg("staHostname")) {
+        String newHost = server.arg("staHostname");
+        strncpy(staHostname, newHost.c_str(), 63);
+        staHostname[63] = '\0';
         changed = true;
     }
 
@@ -2288,6 +2310,15 @@ void setupWiFiStation() {
     DEBUG_PRINTLN(  "║   WIFI STATION VERBINDUNG              ║");
     DEBUG_PRINTLN(  "╚════════════════════════════════════════╝");
     DEBUG_PRINTF("SSID: %s\n", staSsid);
+
+    // DHCP-Hostname (Option 12) setzen, falls konfiguriert. Manche Cisco-ISE-
+    // Policies pruefen den Hostname beim Endpoint-Profiling. Muss vor
+    // WiFi.begin/wifi_station_connect aufgerufen werden, damit der erste
+    // DHCP-Request den Wert mitsendet.
+    if (strlen(staHostname) > 0) {
+        DEBUG_PRINTF("Hostname: %s\n", staHostname);
+        WiFi.hostname(staHostname);
+    }
 
     // Statische IP konfigurieren (vor WiFi.begin!)
     if (!staDhcp) {
