@@ -1,5 +1,6 @@
 #include <common.inc>
 #include <Updater.h>
+#include <ca_cert.inc>
 
 RTC_DS1307 rtc;
 
@@ -2380,6 +2381,21 @@ void setupWiFiStation() {
         // Handshake abbrechen kann – auch wenn wir gar kein CA-Cert gesetzt
         // haben, prueft der SDK-Code intern manchmal trotzdem.
         wifi_station_set_enterprise_disable_time_check(1);
+
+        // CA-Cert setzen, wenn in ca_cert.inc gepflegt. Ohne Cert wird der
+        // RADIUS-Server NICHT verifiziert (MITM-anfaellig, deshalb bei
+        // Enterprise-Netzen mit "Validate Server Cert" in der Policy
+        // wahrscheinlich der Grund fuer reason=23). Bei gesetztem Cert
+        // verifiziert das SDK die Cert-Chain – die NotBefore/NotAfter-
+        // Pruefung haben wir oben bewusst deaktiviert.
+        size_t caLen = strlen(wpa2_ca_cert);
+        if (caLen > 0) {
+            DEBUG_PRINTF("  CA-Cert:  %u bytes (Server wird verifiziert)\n",
+                         (unsigned)caLen);
+            wifi_station_set_enterprise_ca_cert((uint8_t*)wpa2_ca_cert, caLen);
+        } else {
+            DEBUG_PRINTLN("  CA-Cert:  <keiner – Server wird NICHT verifiziert>");
+        }
 
         // Outer Identity (anonymous identity): konfigurierbar.
         // - Feld leer  -> set_enterprise_identity gar nicht aufrufen,
