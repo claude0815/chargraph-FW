@@ -2345,6 +2345,16 @@ void setupWiFiStation() {
     WiFi.setAutoReconnect(true);
     WiFi.persistent(false);  // Kein Flash-Write bei jedem Connect
 
+    // Modem-Sleep waehrend Connect/EAP deaktivieren: das ESP geht sonst
+    // zwischen Beacons in Sleep, wodurch lange EAP-Fragmente (Server-Cert
+    // ueber mehrere Frames) gerne mal verschluckt werden – bekannter
+    // Workaround fuer sporadische 802.1X-Fails.
+    WiFi.setSleepMode(WIFI_NONE_SLEEP);
+
+    // TX-Power auf Maximum (20.5 dBm). Falls der AP am Limit der Reichweite
+    // steht, gehen sonst gerade die laengsten EAP-Frames verloren.
+    WiFi.setOutputPower(20.5);
+
     // Verbindung starten
     if (staEnterprise && strlen(staIdentity) > 0) {
         DEBUG_PRINTLN("→ WPA2-Enterprise (PEAP/MS-CHAPv2)");
@@ -2363,6 +2373,13 @@ void setupWiFiStation() {
         // Default ("anonymous@espressif.com") zurueckzufallen, was manche
         // RADIUS-Server (Cisco ISE) als ungueltig zurueckweisen.
         wifi_station_set_wpa2_enterprise_auth(1);
+
+        // Server-Cert-Validitaetspruefung (NotBefore/NotAfter) abschalten:
+        // ohne synchronisierte RTC ist die ESP-Zeit "1970", wodurch jedes
+        // Server-Cert als "noch nicht gueltig" gilt und das SDK den TLS-
+        // Handshake abbrechen kann – auch wenn wir gar kein CA-Cert gesetzt
+        // haben, prueft der SDK-Code intern manchmal trotzdem.
+        wifi_station_set_enterprise_disable_time_check(1);
 
         // Outer Identity (anonymous identity): konfigurierbar.
         // - Feld leer  -> set_enterprise_identity gar nicht aufrufen,
