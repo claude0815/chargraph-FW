@@ -397,6 +397,28 @@ void resetSpecialWordInterval() {
     DEBUG_PRINTLN("✓ Spezialwort-Intervall zurückgesetzt auf 60 Minuten");
 }
 
+void loadSpecialWordMode() {
+    uint8_t stored = EEPROM.read(ADDR_SPECIAL_WORD_MODE);
+    if (stored <= SPECIAL_WORD_MODE_PARALLEL) {
+        specialWordMode = stored;
+        DEBUG_PRINTF("✓ Spezialwort-Modus aus EEPROM geladen: %d\n", specialWordMode);
+    } else {
+        specialWordMode = SPECIAL_WORD_MODE_INTERVAL;
+        DEBUG_PRINTLN("✓ Standard Spezialwort-Modus: Intervall");
+    }
+}
+
+void saveSpecialWordMode(uint8_t mode) {
+    if (mode > SPECIAL_WORD_MODE_PARALLEL) {
+        DEBUG_PRINTF("❌ Ungültiger Spezialwort-Modus: %d\n", mode);
+        return;
+    }
+    specialWordMode = mode;
+    EEPROM.write(ADDR_SPECIAL_WORD_MODE, mode);
+    EEPROM.commit();
+    DEBUG_PRINTF("✓ Spezialwort-Modus gespeichert: %d\n", mode);
+}
+
 // Hilfsfunktion: Prüft, ob Spezialwort angezeigt werden soll
 bool shouldShowSpecialWord(int minutes) {
     // Prüfe ob aktuelle Minute ein Vielfaches des Intervalls ist
@@ -1267,6 +1289,8 @@ void handleGetSpecialWords() {
     }
     json += "],\"interval\":";
     json += String(specialWordInterval);
+    json += ",\"mode\":";
+    json += String(specialWordMode);
     json += "}";
 
     server.send(200, "application/json", json);
@@ -1295,6 +1319,12 @@ void handleSaveSpecialWords() {
     if (server.hasArg("interval")) {
         uint8_t interval = server.arg("interval").toInt();
         saveSpecialWordInterval(interval);
+    }
+
+    // Modus speichern (falls angegeben)
+    if (server.hasArg("mode")) {
+        uint8_t mode = server.arg("mode").toInt();
+        saveSpecialWordMode(mode);
     }
 
     saveSpecialWords(newWords);
@@ -2692,6 +2722,7 @@ void setup()
     loadSpecialWords();
     loadMinuteLeds();
     loadSpecialWordInterval();
+    loadSpecialWordMode();
 
     DEBUG_PRINT("\n╔════════════════════════════════╗\n");
     DEBUG_PRINT(  "║   Prüfe Wörter in Liste...     ║\n");
@@ -2878,14 +2909,18 @@ void loop()
     getCurrentTime(hours, minutes, seconds);
     if (minutes != lastDisplayedMinute)
     {
-      // Prüfe ob Spezialwort angezeigt werden soll (basierend auf Intervall)
-      if (shouldShowSpecialWord(minutes))
-      {
-        showSpecialWordThenTime(hours, minutes);
-      }
-      else
-      {
-        displayTime(hours, minutes);
+      switch (specialWordMode) {
+        case SPECIAL_WORD_MODE_PARALLEL:
+          displayTimeWithSpecial(hours, minutes);
+          break;
+        case SPECIAL_WORD_MODE_INTERVAL:
+          if (shouldShowSpecialWord(minutes)) showSpecialWordThenTime(hours, minutes);
+          else                                displayTime(hours, minutes);
+          break;
+        case SPECIAL_WORD_MODE_OFF:
+        default:
+          displayTime(hours, minutes);
+          break;
       }
       lastDisplayedMinute = minutes;
     }

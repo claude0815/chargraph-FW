@@ -126,6 +126,45 @@ bool showSpecialWordSequence(const char words[][SPECIAL_WORD_LENGTH], CRGB color
   return true;
 }
 
+// Setzt das Wort nur an LEDs, die aktuell schwarz sind. Buchstaben, die
+// bereits von der Uhrzeit belegt sind, bleiben unveraendert. Rueckgabe ist
+// die Anzahl tatsaechlich gesetzter LEDs (>0 = ganz oder teilweise sichtbar).
+int setWordOnlyIfFree(const char* word, CRGB color, int occurrence, bool searchBackward)
+{
+    int pos = findWord(word, occurrence, searchBackward);
+    if (pos == -1) return 0;
+    int length = strlen(word);
+    int ledIndices[length];
+    getLedsFromPosition(pos, length, ledIndices);
+
+    int painted = 0;
+    for (int i = 0; i < length; i++)
+    {
+      int idx = bridgeLED(ledIndices[i]);
+      if (leds[idx] == CRGB(CRGB::Black)) {
+        leds[idx] = color;
+        painted++;
+      }
+    }
+    return painted;
+}
+
+// Wie displayTime(), zeigt aber zusaetzlich die Spezialwoerter parallel:
+// Erst die Uhrzeit rendern, dann die Spezialwoerter mit specialColor an
+// allen Buchstaben overlayen, die nicht von der Uhrzeit belegt sind.
+void displayTimeWithSpecial(int hours, int minutes)
+{
+  displayTime(hours, minutes);
+
+  for (uint i = 0; i < MAXWORDS; i++) {
+    if (SPECIAL_WORD[i][0] == '\0') continue;
+    setWordOnlyIfFree(SPECIAL_WORD[i], specialColor, 0);
+  }
+  noInterrupts();
+  showLEDs();
+  interrupts();
+}
+
 // Orchestriert: bisherigen Text ausblenden → Spezialwort zeigen → neue Zeit rendern (mit sanftem Einblenden)
 void showSpecialWordThenTime(int hours, int minutes)
 {

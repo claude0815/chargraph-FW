@@ -87,6 +87,7 @@ const uint8_t MAX_BRIGHTNESS = 80;     // Maximum für Helligkeit (100%)
 // SPECIAL WORD VARIABLEN
 // ════════════════════════════════════════════════════════════════
 uint8_t specialWordInterval = 60;     // Anzeigeintervall in Minuten (Default: jede Stunde)
+uint8_t specialWordMode = SPECIAL_WORD_MODE_INTERVAL;  // Anzeige-Modus (0=off, 1=interval, 2=parallel)
 
 // ════════════════════════════════════════════════════════════════
 // PATTERN TEST VARIABLEN

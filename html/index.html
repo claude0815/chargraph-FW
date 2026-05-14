@@ -985,6 +985,20 @@
             </div>
 
             <div class="form-group">
+                <label>🎬 Anzeige-Modus:</label>
+                <select id="specialwordmode" onchange="updateSpecialWordIntervalState()" style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--input-bg); color: var(--text-primary);">
+                    <option value="0">Aus (nie zeigen)</option>
+                    <option value="1" selected>Im Intervall (Animation)</option>
+                    <option value="2">Parallel zur Uhrzeit (immer sichtbar)</option>
+                </select>
+                <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                    <b>Parallel</b>: Spezialw&ouml;rter leuchten in der Sonderfarbe, aber nur an
+                    Buchstaben, die nicht gerade von der Uhrzeit belegt sind. So bleibt die
+                    Uhrzeit immer komplett lesbar.
+                </div>
+            </div>
+
+            <div class="form-group">
                 <label>⏱️ Anzeigeintervall:</label>
                 <select id="specialwordinterval" style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--input-bg); color: var(--text-primary);">
                     <option value="1">Jede Minute</option>
@@ -2616,6 +2630,14 @@
         // ════════════════════════════════════════════════════════════════
         // SPECIAL WORD FUNKTIONEN
         // ════════════════════════════════════════════════════════════════
+        function updateSpecialWordIntervalState() {
+            const mode = document.getElementById('specialwordmode').value;
+            const intervalSelect = document.getElementById('specialwordinterval');
+            // Intervall ist nur im Modus "1 = Im Intervall" relevant.
+            intervalSelect.disabled = (mode !== '1');
+            intervalSelect.style.opacity = (mode !== '1') ? '0.5' : '1';
+        }
+
         function loadSpecialWords() {
             fetch('/specialwords/get')
                 .then(response => response.json())
@@ -2627,6 +2649,11 @@
                     if (data.interval) {
                         document.getElementById('specialwordinterval').value = data.interval;
                     }
+                    // Modus setzen
+                    if (data.mode !== undefined && data.mode !== null) {
+                        document.getElementById('specialwordmode').value = data.mode;
+                    }
+                    updateSpecialWordIntervalState();
                     // Spezialwörter unter der Überschrift anzeigen
                     const displayElement = document.getElementById('specialWordsDisplay');
                     const nonEmptyWords = data.words.filter(word => word && word.trim() !== '');
@@ -2655,9 +2682,11 @@
                 params.append('word' + i, words[i]);
             }
 
-            // Intervall hinzufügen
+            // Intervall + Modus hinzufügen
             const interval = document.getElementById('specialwordinterval').value;
             params.append('interval', interval);
+            const mode = document.getElementById('specialwordmode').value;
+            params.append('mode', mode);
 
             fetch('/specialwords/save?' + params.toString())
                 .then(response => response.text())

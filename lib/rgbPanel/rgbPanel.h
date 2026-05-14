@@ -37,6 +37,8 @@
   extern int setWord(const char* word, CRGB color, int occurrence = 0, bool searchBackward = false);
   extern void getLedsFromPosition(int startPos, int length, int* ledArray);
   extern void displayTime(int hours, int minutes);
+  extern void displayTimeWithSpecial(int hours, int minutes);
+  extern int setWordOnlyIfFree(const char* word, CRGB color, int occurrence = 0, bool searchBackward = false);
   extern void showSpecialWordThenTime(int hours, int minutes);
   extern void fadeOutAll(uint8_t steps, uint16_t stepDelayMs);
   extern void fadeInCurrentFrame(uint8_t targetBrightness, uint8_t steps, uint16_t stepDelayMs);

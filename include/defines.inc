@@ -95,6 +95,11 @@
 #define ADDR_SPECIAL_WORD_SET     417    // Flag: Custom Special Words (1 byte)
 #define ADDR_MINUTE_LEDS_SET      418    // Flag: Custom Minute LEDs (1 byte)
 #define ADDR_SPECIAL_WORD_INTERVAL 419   // Anzeigeintervall in Minuten (1 byte)
+#define ADDR_SPECIAL_WORD_MODE    613    // Anzeige-Modus (0=off, 1=interval, 2=parallel)
+
+#define SPECIAL_WORD_MODE_OFF      0
+#define SPECIAL_WORD_MODE_INTERVAL 1
+#define SPECIAL_WORD_MODE_PARALLEL 2
 
 // ════════════════════════════════════════════════════════════════
 // WPA2-ENTERPRISE (PEAP/MS-CHAPv2) ADRESSEN (frei: 485-511)
