@@ -438,6 +438,7 @@ void loadConfig() {
         normalColor.r = EEPROM.read(ADDR_COLOR_R);
         normalColor.g = EEPROM.read(ADDR_COLOR_G);
         normalColor.b = EEPROM.read(ADDR_COLOR_B);
+        useRainbow = (EEPROM.read(ADDR_USE_RAINBOW) == RAINBOW_MAGIC);
 
         specialColor.r = EEPROM.read(ADDR_SPECIAL_R);
         specialColor.g = EEPROM.read(ADDR_SPECIAL_G);
@@ -495,6 +496,7 @@ void saveConfig() {
     EEPROM.write(ADDR_COLOR_R, normalColor.r);
     EEPROM.write(ADDR_COLOR_G, normalColor.g);
     EEPROM.write(ADDR_COLOR_B, normalColor.b);
+    EEPROM.write(ADDR_USE_RAINBOW, useRainbow ? RAINBOW_MAGIC : 0);
     EEPROM.write(ADDR_SPECIAL_R, specialColor.r);
     EEPROM.write(ADDR_SPECIAL_G, specialColor.g);
     EEPROM.write(ADDR_SPECIAL_B, specialColor.b);
@@ -935,11 +937,11 @@ void displayTime(int hours, int minutes)
       // Hervorhebung für Stundenwort (letztes vor UHR)
       if (i == (result.wordCount - 1 - hasUhr))
       {
-        setWord(wordBuf, normalColor, 0, true);
+        setWordAuto(wordBuf, 0, true);
       }
       else
       {
-        setWord(wordBuf, normalColor, 0);
+        setWordAuto(wordBuf, 0);
       }
     }
 
@@ -948,7 +950,7 @@ void displayTime(int hours, int minutes)
     {
         if(result.ledHex & (1 << i))
         {
-          leds[bridgeLED(MINUTE_LEDS[3-i])] = normalColor;
+          leds[bridgeLED(MINUTE_LEDS[3-i])] = colorForLed(MINUTE_LEDS[3-i]);
         }
         else
         {
@@ -1163,6 +1165,20 @@ void handleRoot() {
     server.send_P(200, "text/html", (const char*)HTML_PAGE_GZIP, HTML_PAGE_GZIP_LEN);
 
     DEBUG_PRINTF("  HTML gesendet: %d Bytes (komprimiert)\n", HTML_PAGE_GZIP_LEN);
+}
+
+void handleGetColors() {
+    String json = "{";
+    json += "\"nr\":" + String(normalColor.r) + ",";
+    json += "\"ng\":" + String(normalColor.g) + ",";
+    json += "\"nb\":" + String(normalColor.b) + ",";
+    json += "\"sr\":" + String(specialColor.r) + ",";
+    json += "\"sg\":" + String(specialColor.g) + ",";
+    json += "\"sb\":" + String(specialColor.b) + ",";
+    json += "\"brightness\":" + String(brightness) + ",";
+    json += "\"rainbow\":" + String(useRainbow ? "true" : "false");
+    json += "}";
+    server.send(200, "application/json", json);
 }
 
 void handleGetTime() {
@@ -1429,6 +1445,9 @@ void handleSave() {
         normalColor.r = server.arg("nr").toInt();
         normalColor.g = server.arg("ng").toInt();
         normalColor.b = server.arg("nb").toInt();
+        if (server.hasArg("rainbow")) {
+            useRainbow = (server.arg("rainbow") == "1" || server.arg("rainbow") == "true");
+        }
         
         specialColor.r = server.arg("sr").toInt();
         specialColor.g = server.arg("sg").toInt();
@@ -2771,6 +2790,7 @@ void setup()
     server.on("/", handleRoot);
     server.on("/save", handleSave);
     server.on("/gettime", handleGetTime);
+    server.on("/colors/get", handleGetColors);
     server.on("/getcharsoap", handleGetCharsoap);
     server.on("/resetcharsoap", handleResetCharsoap);
     server.on("/ledtest", handleLEDTest);

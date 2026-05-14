@@ -96,6 +96,8 @@
 #define ADDR_MINUTE_LEDS_SET      418    // Flag: Custom Minute LEDs (1 byte)
 #define ADDR_SPECIAL_WORD_INTERVAL 419   // Anzeigeintervall in Minuten (1 byte)
 #define ADDR_SPECIAL_WORD_MODE    613    // Anzeige-Modus (0=off, 1=interval, 2=parallel)
+#define ADDR_USE_RAINBOW          614    // Regenbogenfarben fuer Uhrzeit (1 byte, Magic)
+#define RAINBOW_MAGIC             0xA5
 
 #define SPECIAL_WORD_MODE_OFF      0
 #define SPECIAL_WORD_MODE_INTERVAL 1

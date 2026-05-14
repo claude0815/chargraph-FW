@@ -89,6 +89,12 @@ const uint8_t MAX_BRIGHTNESS = 80;     // Maximum für Helligkeit (100%)
 uint8_t specialWordInterval = 60;     // Anzeigeintervall in Minuten (Default: jede Stunde)
 uint8_t specialWordMode = SPECIAL_WORD_MODE_INTERVAL;  // Anzeige-Modus (0=off, 1=interval, 2=parallel)
 
+// Regenbogenfarben fuer die Uhrzeit. Wenn true, wird normalColor ignoriert
+// und stattdessen jeder Buchstabe gemaess seiner Position auf der 11x11-
+// Matrix eingefaerbt (diagonaler Hue-Gradient: oben-links -> unten-rechts).
+// Spezialwoerter behalten ihre specialColor.
+bool useRainbow = false;
+
 // ════════════════════════════════════════════════════════════════
 // PATTERN TEST VARIABLEN
 // ════════════════════════════════════════════════════════════════

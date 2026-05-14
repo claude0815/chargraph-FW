@@ -347,6 +347,35 @@ int setWord(const char* word, CRGB color, int occurrence, bool searchBackward)
     return pos;
 }
 
+// Liefert die Uhrzeit-Farbe fuer eine LED-Position. Bei useRainbow=true
+// wird ein diagonaler Regenbogen-Gradient ueber die 11x11-Matrix berechnet
+// (oben-links -> unten-rechts), sonst die globale normalColor.
+CRGB colorForLed(int ledIndex)
+{
+    if (!useRainbow) return normalColor;
+    int row = ledIndex / COLS;
+    int col = ledIndex % COLS;
+    // (row+col) reicht von 0 bis (COLS+ROWS-2) = 20 -> auf 0..255 mappen
+    uint8_t hue = ((uint16_t)(row + col) * 255U) / (COLS + ROWS - 2);
+    return CHSV(hue, 255, 255);
+}
+
+// Wie setWord, verwendet aber colorForLed(...) pro Buchstabe – d.h. bei
+// aktivem Regenbogen erhaelt jeder Buchstabe die zu seiner Position
+// passende Hue, sonst normalColor.
+int setWordAuto(const char* word, int occurrence, bool searchBackward)
+{
+    int pos = findWord(word, occurrence, searchBackward);
+    if (pos == -1) return -1;
+    int length = strlen(word);
+    int ledIndices[length];
+    getLedsFromPosition(pos, length, ledIndices);
+    for (int i = 0; i < length; i++) {
+        leds[bridgeLED(ledIndices[i])] = colorForLed(ledIndices[i]);
+    }
+    return pos;
+}
+
 // ════════════════════════════════════════════════════════════════
 // FUNKTIONEN: LED-ANSTEUERUNG
 // ════════════════════════════════════════════════════════════════

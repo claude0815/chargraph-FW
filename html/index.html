@@ -925,6 +925,18 @@
                 <div class="color-box" id="previewNormal"></div>
             </div>
         </div>
+
+        <div class="form-group">
+            <label>
+                <input type="checkbox" id="useRainbow" style="width: auto; margin-right: 10px;">
+                🌈 Regenbogen statt Grundfarbe
+            </label>
+            <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                Jeder Buchstabe der Uhrzeit erh&auml;lt eine eigene Regenbogenfarbe,
+                gleichm&auml;&szlig;ig diagonal von oben-links nach unten-rechts verteilt.
+                Spezialw&ouml;rter behalten ihre Farbe.
+            </div>
+        </div>
         
         <div class="form-group">
             <label>✨ Farbe für Spezialtext:</label>
@@ -1591,6 +1603,28 @@
                 .catch(error => alert('❌ Fehler beim Speichern: ' + error));
         }
 
+        function rgbToHex(r, g, b) {
+            const h = v => ('0' + parseInt(v).toString(16)).slice(-2);
+            return '#' + h(r) + h(g) + h(b);
+        }
+
+        function loadColors() {
+            fetch('/colors/get')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('normalColor').value = rgbToHex(data.nr, data.ng, data.nb);
+                    document.getElementById('specialColor').value = rgbToHex(data.sr, data.sg, data.sb);
+                    if (data.brightness !== undefined) {
+                        document.getElementById('brightness').value = data.brightness;
+                        const bv = document.getElementById('brightnessValue');
+                        if (bv) bv.innerHTML = data.brightness;
+                    }
+                    document.getElementById('useRainbow').checked = !!data.rainbow;
+                    updatePreview();
+                })
+                .catch(err => console.error('Fehler beim Laden der Farben:', err));
+        }
+
         function saveColors() {
             const normalColor = document.getElementById('normalColor').value;
             const specialColor = document.getElementById('specialColor').value;
@@ -1599,11 +1633,14 @@
             const normalRGB = hexToRgb(normalColor);
             const specialRGB = hexToRgb(specialColor);
 
+            const rainbow = document.getElementById('useRainbow').checked ? 1 : 0;
+
             // Nur Farben & Helligkeit speichern
             const url = '/save?timestamp=0' +  // 0 = Zeit nicht ändern
                        '&tzoffset=0' +
                        '&nr=' + normalRGB.r + '&ng=' + normalRGB.g + '&nb=' + normalRGB.b +
                        '&sr=' + specialRGB.r + '&sg=' + specialRGB.g + '&sb=' + specialRGB.b +
+                       '&rainbow=' + rainbow +
                        '&brightness=' + brightness +
                        '&charsoap=';  // Leer = nicht ändern
 
@@ -2543,6 +2580,7 @@
             loadCharsoap();
             loadSpecialWords();
             loadMinuteLeds();
+            loadColors();
             loadOTAInfo();
             loadWiFiConfig();
             loadAutoBrightnessConfig();

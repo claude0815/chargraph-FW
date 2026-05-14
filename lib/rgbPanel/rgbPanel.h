@@ -28,6 +28,7 @@
   extern char charsoap[(COLS * ROWS * 2)+1];
   extern const char DEFAULT_CHARSOAP[];
   extern char SPECIAL_WORD[MAXWORDS][SPECIAL_WORD_LENGTH];  // MAXWORDS = 3
+  extern bool useRainbow;
 
   extern void showLEDs();
   extern int bridgeLED(int pos);
@@ -35,6 +36,8 @@
   extern void checkPattern();
   extern int findWord(const char* word, int occurrence = 0, bool searchBackward = false);
   extern int setWord(const char* word, CRGB color, int occurrence = 0, bool searchBackward = false);
+  extern int setWordAuto(const char* word, int occurrence = 0, bool searchBackward = false);
+  extern CRGB colorForLed(int ledIndex);
   extern void getLedsFromPosition(int startPos, int length, int* ledArray);
   extern void displayTime(int hours, int minutes);
   extern void displayTimeWithSpecial(int hours, int minutes);
