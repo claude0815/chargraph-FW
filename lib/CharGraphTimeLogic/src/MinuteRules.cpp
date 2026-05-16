@@ -40,23 +40,43 @@ static uint8_t rule_01_02(const RuleContext& ctx, const char** outWords) {
   return 2;
 }
 
-// :03-:04 - NACH
+// :03-:04 - NACH (oder KURZ NACH, wenn KURZ im Pattern)
 static uint8_t rule_03_04(const RuleContext& ctx, const char** outWords) {
+  if (ctx.hasKurz && ctx.fallbackLevel == 0) {
+    outWords[0] = KURZ;
+    outWords[1] = NACH;
+    outWords[2] = ctx.hourWord;
+    return 3;
+  }
   outWords[0] = NACH;
   outWords[1] = ctx.hourWord;
   return 2;
 }
 
-// :05-:09 - FÜNF NACH
+// :05-:09 - FÜNF NACH (oder FAST ZEHN NACH bei :08/:09, wenn FAST im Pattern)
 static uint8_t rule_05_09(const RuleContext& ctx, const char** outWords) {
+  if ((ctx.mm == 8 || ctx.mm == 9) && ctx.hasFast && ctx.fallbackLevel == 0) {
+    outWords[0] = FAST;
+    outWords[1] = ZEHN;
+    outWords[2] = NACH;
+    outWords[3] = ctx.hourWord;
+    return 4;
+  }
   outWords[0] = FUENF;
   outWords[1] = NACH;
   outWords[2] = ctx.hourWord;
   return 3;
 }
 
-// :10-:14 - ZEHN NACH
+// :10-:14 - ZEHN NACH (oder FAST VIERTEL NACH bei :13/:14, wenn FAST im Pattern)
 static uint8_t rule_10_14(const RuleContext& ctx, const char** outWords) {
+  if ((ctx.mm == 13 || ctx.mm == 14) && ctx.hasFast && ctx.fallbackLevel == 0) {
+    outWords[0] = FAST;
+    outWords[1] = VIERTEL;
+    outWords[2] = NACH;
+    outWords[3] = ctx.hourWord;
+    return 4;
+  }
   outWords[0] = ZEHN;
   outWords[1] = NACH;
   outWords[2] = ctx.hourWord;
@@ -239,8 +259,15 @@ static uint8_t rule_31_32(const RuleContext& ctx, const char** outWords) {
   return 3;
 }
 
-// :33-:34 - NACH HALB
+// :33-:34 - NACH HALB (oder KURZ NACH HALB, wenn KURZ im Pattern)
 static uint8_t rule_33_34(const RuleContext& ctx, const char** outWords) {
+  if (ctx.hasKurz && ctx.fallbackLevel == 0) {
+    outWords[0] = KURZ;
+    outWords[1] = NACH;
+    outWords[2] = HALB;
+    outWords[3] = ctx.hourWord;
+    return 4;
+  }
   outWords[0] = NACH;
   outWords[1] = HALB;
   outWords[2] = ctx.hourWord;
@@ -256,8 +283,16 @@ static uint8_t rule_35_39(const RuleContext& ctx, const char** outWords) {
   return 4;
 }
 
-// :40-:44 - ZEHN NACH HALB or ZWANZIG VOR (with fallback support)
+// :40-:44 - ZEHN NACH HALB / ZWANZIG VOR / FAST VIERTEL VOR (with fallback)
 static uint8_t rule_40_44(const RuleContext& ctx, const char** outWords) {
+  // Bei :43/:44 + FAST: "FAST VIERTEL VOR [h]" – naeher dran als ZWANZIG VOR
+  if ((ctx.mm == 43 || ctx.mm == 44) && ctx.hasFast && ctx.fallbackLevel == 0) {
+    outWords[0] = FAST;
+    outWords[1] = VIERTEL;
+    outWords[2] = VOR;
+    outWords[3] = ctx.hourWord;
+    return 4;
+  }
   if (ctx.fallbackLevel == 0 && ctx.hasZwanzig) {
     // Primary: ZWANZIG VOR [h]
     outWords[0] = ZWANZIG;
