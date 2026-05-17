@@ -1214,6 +1214,8 @@ void handleGetTime() {
     server.send(200, "application/json", json);
 }
 
+void clearPowerLossWarning();  // Forward-Declaration, Definition weiter unten
+
 void handlePowerLossClear() {
     DEBUG_PRINTLN("→ handlePowerLossClear aufgerufen");
     clearPowerLossWarning();
