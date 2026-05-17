@@ -2896,7 +2896,7 @@ void setup()
 // AUTO-BRIGHTNESS MIT ADC (A0)
 // ════════════════════════════════════════════════════════════════
 unsigned long lastBrightnessUpdate = 0;
-const unsigned long brightnessUpdateInterval = 10000;  // 2 Sekunden
+const unsigned long brightnessUpdateInterval = 500;  // 500 ms = 2 Hz, schnell aber nicht flackernd
 
 void updateBrightness() {
        yield();
