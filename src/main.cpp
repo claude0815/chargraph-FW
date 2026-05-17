@@ -2937,8 +2937,10 @@ void updateBrightness() {
     // 80 = 100% User-Helligkeit entspricht 204 = 80% LED-Helligkeit
     newBrightness = map(newBrightness, 0, 80, 0, 204);
 
-    // Helligkeit setzen
+    // Helligkeit setzen + sofort an die LEDs senden (sonst wirkt der neue
+    // Wert erst beim naechsten Minuten-Refresh durch displayTime).
     FastLED.setBrightness(newBrightness);
+    showLEDs();
 
     DEBUG_PRINTF("Auto-Brightness: ADC=%d → Brightness=%d (Range: %d-%d)\n",
                  adcValue, newBrightness, autoBrightnessMin, autoBrightnessMax);
