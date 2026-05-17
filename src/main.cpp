@@ -2909,7 +2909,7 @@ void updateBrightness() {
     }
     
     lastBrightnessUpdate = millis();
-    return;
+
     // ADC mehrfach auslesen und Mittelwert bilden (reduziert Rauschen)
     uint32_t adcSum = 0;
     const uint8_t samples = 10;
