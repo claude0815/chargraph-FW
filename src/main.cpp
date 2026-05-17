@@ -2984,8 +2984,8 @@ void loop()
       #endif
     }
     
-  // Auto-Brightness aktualisieren (jede Sekunde)
-  //updateBrightness();
+  // Auto-Brightness aktualisieren (intern auf alle brightnessUpdateInterval ms gedrosselt)
+  updateBrightness();
 
   // Stromausfall-Modus: nur SOS rendern, normale Anzeige uebergehen.
   // Webserver und Auto-Reconnect laufen oben weiter, der User kann die
