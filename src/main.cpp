@@ -1207,10 +1207,17 @@ void handleGetTime() {
     json += "\"lastSync\":" + String(lastSyncTime) + ",";
     json += "\"driftRate\":" + String(driftRate, 3) + ",";
     json += "\"syncCount\":" + String(syncCount) + ",";
-    json += "\"uptime\":" + String(millis() / 1000);
+    json += "\"uptime\":" + String(millis() / 1000) + ",";
+    json += "\"powerLoss\":" + String(powerLossDetected ? "true" : "false");
     json += "}";
 
     server.send(200, "application/json", json);
+}
+
+void handlePowerLossClear() {
+    DEBUG_PRINTLN("→ handlePowerLossClear aufgerufen");
+    clearPowerLossWarning();
+    server.send(200, "text/plain", "OK - Stromausfall-Warnung quittiert");
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2200,9 +2207,62 @@ bool detectPowerLossWithRTC() {
     return false;
 }
 
+// Non-blocking SOS-Renderer (... --- ...) fuer den Stromausfall-Modus.
+// Wird aus loop() statt displayTime() aufgerufen, solange powerLossDetected
+// true ist. Der Webserver laeuft parallel weiter, der User kann die Zeit
+// setzen und ueber /powerloss/clear quittieren.
+void renderPowerLossSOS() {
+    // Pattern: 3x kurz, Pause, 3x lang, Pause, 3x kurz, lange Pause
+    static const uint16_t durations[] = {
+        200,200, 200,200, 200,200, 400,   // S
+        600,200, 600,200, 600,200, 400,   // O
+        200,200, 200,200, 200,200, 2000   // S + lange Pause
+    };
+    static const bool   ledOn[] = {
+        true,false, true,false, true,false, false,
+        true,false, true,false, true,false, false,
+        true,false, true,false, true,false, false
+    };
+    static const uint8_t SEQ_LEN = sizeof(durations) / sizeof(durations[0]);
+    static unsigned long phaseStart = 0;
+    static uint8_t phase = 0;
+    static int8_t lastApplied = -1;  // -1 = noch nichts gerendert
+
+    if (phaseStart == 0) phaseStart = millis();
+
+    int8_t want = ledOn[phase] ? 1 : 0;
+    if (want != lastApplied) {
+        if (want) {
+            fill_solid(leds, NUM_LEDS, CRGB::Red);
+            FastLED.setBrightness(40);
+        } else {
+            FastLED.clear();
+        }
+        showLEDs();
+        lastApplied = want;
+    }
+
+    if (millis() - phaseStart >= durations[phase]) {
+        phaseStart = millis();
+        phase = (phase + 1) % SEQ_LEN;
+    }
+}
+
+// Wird vom Endpoint /powerloss/clear aufgerufen, sobald der User die
+// Stromausfall-Warnung quittiert hat. Setzt den Marker zurueck, schreibt
+// das Running-Flag (damit der naechste Boot nicht erneut anschlaegt) und
+// stoesst eine sofortige Zeit-Anzeige an.
+void clearPowerLossWarning() {
+    powerLossDetected = false;
+    setRunningFlag();
+    FastLED.clear();
+    showLEDs();
+    lastDisplayedMinute = -1;  // erzwingt Neu-Render im naechsten loop()
+}
+
 void powerLossLoop() {
     Serial.println("⚠ STROMAUSFALL-WARNUNG - Blinke SOS-Muster");
-    
+
     while (true) {
         // SOS-Muster: ... --- ...
         
@@ -2757,16 +2817,18 @@ void setup()
     loadAutoBrightnessConfig();
 
     // ═══ STROMAUSFALL-PRÜFUNG ═══
+    // Bei erkanntem Stromausfall NICHT mehr blockierend in powerLossLoop()
+    // bleiben – stattdessen Flag setzen, WLAN + Webserver normal starten,
+    // im loop() wird SOS gerendert bis der User in der UI quittiert.
     powerLossDetected = detectPowerLoss();
-    
-    if (powerLossDetected)
-    {
-        powerLossLoop();  // Blinkt ROT bis Neustart
+    if (powerLossDetected) {
+        Serial.println("⚠ Stromausfall – Webserver wird gestartet, SOS laeuft bis Quittierung");
+    } else {
+        // Nur im Normalfall direkt das Running-Flag setzen – sonst wuerde
+        // ein Reset waehrend des Stromausfall-Modus den Marker auf 'lief'
+        // setzen, ohne dass der User die Zeit jemals quittiert hat.
+        setRunningFlag();
     }
-    
-    // Wenn wir hier ankommen: Kein Stromausfall
-    // SETZE RUNNING-FLAG (System läuft jetzt)
-    setRunningFlag();
 
     // User-Helligkeit (0-80) auf LED-Helligkeit (0-204) mappen
     FastLED.setBrightness(map(brightness, 0, 80, 0, 204));
@@ -2791,6 +2853,7 @@ void setup()
     server.on("/save", handleSave);
     server.on("/gettime", handleGetTime);
     server.on("/colors/get", handleGetColors);
+    server.on("/powerloss/clear", handlePowerLossClear);
     server.on("/getcharsoap", handleGetCharsoap);
     server.on("/resetcharsoap", handleResetCharsoap);
     server.on("/ledtest", handleLEDTest);
@@ -2921,6 +2984,15 @@ void loop()
     
   // Auto-Brightness aktualisieren (jede Sekunde)
   //updateBrightness();
+
+  // Stromausfall-Modus: nur SOS rendern, normale Anzeige uebergehen.
+  // Webserver und Auto-Reconnect laufen oben weiter, der User kann die
+  // Zeit setzen und ueber /powerloss/clear quittieren.
+  if (powerLossDetected) {
+    renderPowerLossSOS();
+    yield();
+    return;
+  }
 
   // Zeit seit der letzten Anzeige prüfen
   if (millis() - lastUpdateTime >= updateInterval)

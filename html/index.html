@@ -426,6 +426,16 @@
     </svg>
 
     <div class="container">
+        <div id="powerLossBanner" style="display:none; background:#c8302d; color:#fff; padding:16px 20px; border-radius:10px; margin-bottom:18px;">
+            <div style="font-size:18px; font-weight:600; margin-bottom:6px;">&#9888; Stromausfall erkannt</div>
+            <div style="font-size:14px; margin-bottom:12px;">
+                Die Uhr zeigt aktuell ein SOS-Muster. Bitte pr&uuml;fe oben die Zeit
+                und klicke unten auf <em>Quittieren</em>, sobald alles passt.
+            </div>
+            <button onclick="clearPowerLoss()" style="background:#fff; color:#c8302d; border:none; padding:10px 16px; border-radius:8px; font-weight:600; cursor:pointer;">
+                &#10003; Stromausfall quittieren
+            </button>
+        </div>
         <button class="theme-toggle" onclick="toggleTheme()" title="Dark Mode umschalten">
             <svg id="theme-icon-sun" viewBox="0 0 24 24" style="display: none;">
                 <use href="#icon-sun"/>
@@ -1330,11 +1340,24 @@
                     calculateDrift();
                     updateSyncInfo(data);
                     updateNTPStatus();  // NTP-Status aktualisieren
+                    const banner = document.getElementById('powerLossBanner');
+                    if (banner) banner.style.display = data.powerLoss ? 'block' : 'none';
                 })
                 .catch(error => {
                     console.error('Fehler:', error);
                     document.getElementById('espTime').innerHTML = 'Fehler';
                 });
+        }
+
+        function clearPowerLoss() {
+            fetch('/powerloss/clear')
+                .then(r => r.text())
+                .then(() => {
+                    const banner = document.getElementById('powerLossBanner');
+                    if (banner) banner.style.display = 'none';
+                    fetchEspTime();
+                })
+                .catch(err => alert('Fehler beim Quittieren: ' + err));
         }
 
         function updateNTPStatus() {
