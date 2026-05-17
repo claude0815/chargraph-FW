@@ -908,7 +908,10 @@ void displayTime(int hours, int minutes)
   DEBUG_PRINT("' -> ");
   
   //fadeOutAll(200, 15);
-  FastLED.setBrightness(80);
+  // Bewusst KEIN FastLED.setBrightness() hier: die Helligkeit kommt entweder
+  // aus dem manuellen User-Setting (in handleSave/setup gesetzt) oder aus
+  // updateBrightness(). Wuerden wir hier hartcodieren, wuerde der Auto-
+  // Wert jede Minute ueberschrieben werden.
   FastLED.clear();
   showLEDs();
   yield();
