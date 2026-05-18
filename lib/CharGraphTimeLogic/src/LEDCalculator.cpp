@@ -292,12 +292,12 @@ LEDInfo calculateLEDs(
 
   // ===== PRIORITY 10b: SPECIAL CASE :16-:19 FALLBACK ZEHN VOR HALB =====
   if (hasHalb && hasVor && hasZehn && mm >= 16 && mm <= 19) {
-    // Fallback scenario: :16-:19 with "ZEHN VOR HALB"
-    // LEDs = 20 - mm, direction = LEFT (additive towards :20)
+    // Wort sagt :20, wir sind :16-:19 → noch X Minuten BIS :20.
+    // mm < target → subtractive → LEDs von rechts.
     remainder = 20 - mm;
-    if (remainder > 4) remainder = 0;  // Safety
-    isLeftDir = true;
-    result.direction = LEFT;
+    if (remainder > 4) remainder = 0;
+    isLeftDir = false;
+    result.direction = RIGHT;
     result.count = remainder;
     result.hex = ledCountToHex(remainder, isLeftDir);
     return result;
@@ -324,10 +324,13 @@ LEDInfo calculateLEDs(
   }
 
   if (hasHalb && hasVor) {
-    // PRIORITY 10: HALB + VOR → remainder = mm % 5, direction = right
+    // PRIORITY 10: HALB + VOR (z.B. ZEHN VOR HALB DREI bei :20-:24,
+    // FUENF VOR HALB DREI bei :25-:26 oder als Fallback :42-:44 etc.).
+    // Wort sagt floor(mm/5)*5, wir sind mm % 5 Minuten DANACH → additive,
+    // LEDs von links.
     remainder = mm % 5;
-    isLeftDir = false;
-    result.direction = RIGHT;
+    isLeftDir = true;
+    result.direction = LEFT;
     result.count = remainder;
     result.hex = ledCountToHex(remainder, isLeftDir);
     return result;
@@ -344,17 +347,18 @@ LEDInfo calculateLEDs(
       if (wordEquals(words[i], "FuNF")) hasFunf = true;
     }
 
-    // ALL VOR (without HALB): Calculate distance to target minute
-    // If mm < target: still X minutes away → LEFT direction (additive)
-    // If mm >= target: already X minutes past → RIGHT direction (subtractive)
-    if (mm < target) {
-      // Haven't reached target yet: minutes remaining
-      remainder = target - mm;
+    // ALL VOR (without HALB): Distanz zur Ziel-Minute.
+    // Konvention (User): wenn das Wort BEREITS Vergangenheit ist (mm > target),
+    // sind LEDs additive (LEFT). Wenn das Wort noch KOMMT (mm < target),
+    // sind LEDs subtractive (RIGHT).
+    if (mm > target) {
+      // Schon X Minuten ueber die Wort-Zeit hinaus → additive
+      remainder = mm - target;
       isLeftDir = true;
       result.direction = LEFT;
     } else {
-      // Already past target: minutes since target
-      remainder = mm - target;
+      // Noch X Minuten BIS zur Wort-Zeit → subtractive
+      remainder = target - mm;
       isLeftDir = false;
       result.direction = RIGHT;
     }
