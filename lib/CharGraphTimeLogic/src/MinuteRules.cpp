@@ -344,8 +344,15 @@ static uint8_t rule_46_47(const RuleContext& ctx, const char** outWords) {
   return 3;
 }
 
-// :48-:49 - ZEHN VOR (target 50, LED from left/added)
+// :48-:49 - ZEHN VOR (oder FAST ZEHN VOR, wenn FAST im Pattern)
 static uint8_t rule_48_49(const RuleContext& ctx, const char** outWords) {
+  if (ctx.hasFast && ctx.fallbackLevel == 0) {
+    outWords[0] = FAST;
+    outWords[1] = ZEHN;
+    outWords[2] = VOR;
+    outWords[3] = ctx.hourWord;
+    return 4;
+  }
   outWords[0] = ZEHN;
   outWords[1] = VOR;
   outWords[2] = ctx.hourWord;
