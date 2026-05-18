@@ -367,8 +367,15 @@ static uint8_t rule_50_52(const RuleContext& ctx, const char** outWords) {
   return 3;
 }
 
-// :53-:54 - FÜNF VOR (with LEFT direction for clarity: 5+2=7, 5+1=6)
+// :53-:54 - FÜNF VOR (oder FAST FÜNF VOR, wenn FAST im Pattern)
 static uint8_t rule_53_54(const RuleContext& ctx, const char** outWords) {
+  if (ctx.hasFast && ctx.fallbackLevel == 0) {
+    outWords[0] = FAST;
+    outWords[1] = FUENF;
+    outWords[2] = VOR;
+    outWords[3] = ctx.hourWord;
+    return 4;
+  }
   outWords[0] = FUENF;
   outWords[1] = VOR;
   outWords[2] = ctx.hourWord;
