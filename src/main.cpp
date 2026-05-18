@@ -2922,6 +2922,14 @@ void updateBrightness() {
     }
     uint16_t adcValue = adcSum / samples;
 
+    // Exponentieller Tiefpass: 75% alter Wert + 25% neuer Wert.
+    // Glaettet schnelle Schwankungen (z.B. Schatten, Mauszeiger ueber Sensor)
+    // ohne die Reaktion auf echte Helligkeitsaenderungen merklich zu bremsen.
+    static uint16_t smoothedAdc = 0;
+    if (smoothedAdc == 0) smoothedAdc = adcValue;  // Erstinitialisierung
+    smoothedAdc = (smoothedAdc * 3 + adcValue) / 4;
+    adcValue = smoothedAdc;
+
     // Auf kalibrierten Bereich begrenzen
     if (adcValue < autoBrightnessMinADC) adcValue = autoBrightnessMinADC;
     if (adcValue > autoBrightnessMaxADC) adcValue = autoBrightnessMaxADC;
@@ -2941,9 +2949,6 @@ void updateBrightness() {
     // Wert erst beim naechsten Minuten-Refresh durch displayTime).
     FastLED.setBrightness(newBrightness);
     showLEDs();
-
-    DEBUG_PRINTF("Auto-Brightness: ADC=%d → Brightness=%d (Range: %d-%d)\n",
-                 adcValue, newBrightness, autoBrightnessMin, autoBrightnessMax);
 }
 
 void loop()
