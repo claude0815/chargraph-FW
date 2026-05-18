@@ -18,10 +18,12 @@ uint8_t getTargetMinute(
   // Default: left (NACH = count up)
   isLeftDirection = true;
 
-  // Look for minute-indicator words (FÜNF, ZEHN, VIERTEL, ZWANZIG, DREIVIERTEL)
+  // Look for minute-indicator words (FÜNF, ZEHN, VIERTEL, ZWANZIG, DREIVIERTEL).
+  // WICHTIG: nur als Minute zaehlen, wenn direkt danach VOR oder NACH folgt –
+  // sonst ist FUENF/ZEHN die STUNDE (z.B. "HALB ZEHN" = 9:30) und wir muessen
+  // weitersuchen.
   for (uint8_t i = 0; i < wordCount; i++) {
     if (wordEquals(words[i], "FuNF")) {
-      // FÜNF can be NACH (5 min) or VOR (55 min)
       for (uint8_t j = i + 1; j < wordCount; j++) {
         if (wordEquals(words[j], "VOR")) {
           isLeftDirection = false;
@@ -32,11 +34,10 @@ uint8_t getTargetMinute(
           return 5;   // FÜNF NACH = :05
         }
       }
-      // Default for FÜNF alone (rare)
-      return 5;
+      // FÜNF ohne VOR/NACH dahinter → ist die Stunde, weitersuchen
+      continue;
     }
     if (wordEquals(words[i], "ZEHN")) {
-      // ZEHN can be NACH (10 min) or VOR (50 min)
       for (uint8_t j = i + 1; j < wordCount; j++) {
         if (wordEquals(words[j], "VOR")) {
           isLeftDirection = false;
@@ -47,7 +48,8 @@ uint8_t getTargetMinute(
           return 10;  // ZEHN NACH = :10
         }
       }
-      return 10;
+      // ZEHN ohne VOR/NACH dahinter → ist die Stunde, weitersuchen
+      continue;
     }
     if (wordEquals(words[i], "VIERTEL")) {
       // VIERTEL is NACH (15 min) or VOR (45 min)
@@ -192,19 +194,21 @@ LEDInfo calculateLEDs(
   }
 
   if (hasFast || hasBald) {
+    uint8_t target;
     if (hasHalb) {
-      // PRIORITY 2: BALD/FAST + HALB → remainder = target - mm, direction = right
-      bool dummy;
-      uint8_t target = getTargetMinute(words, wordCount, dummy);
-      remainder = (target > mm) ? (target - mm) : 0;
-      if (remainder > 4) remainder = 0;
-      isLeftDir = false;
+      // PRIORITY 2: BALD/FAST + HALB → target = :30, direction = right
+      target = 30;
     } else {
-      // PRIORITY 3: BALD/FAST (no HALB, :57-59) → remainder = 60 - mm, direction = right
-      remainder = 60 - mm;
-      if (remainder > 4) remainder = 0;
-      isLeftDir = false;
+      // PRIORITY 3: BALD/FAST ohne HALB. Target ueber das Minuten-Anker-
+      // Wort (ZEHN NACH = :10, VIERTEL NACH = :15, VIERTEL VOR = :45 …),
+      // oder Fallback :60 (volle Stunde, z.B. "BALD DREI" = :57-:59).
+      bool dummy;
+      target = getTargetMinute(words, wordCount, dummy);
+      if (target == 0) target = 60;
     }
+    remainder = (target > mm) ? (target - mm) : 0;
+    if (remainder > 4) remainder = 0;
+    isLeftDir = false;
     result.direction = RIGHT;
     result.count = remainder;
     result.hex = ledCountToHex(remainder, isLeftDir);
