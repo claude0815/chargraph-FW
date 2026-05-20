@@ -155,6 +155,16 @@ static uint8_t rule_20_24(const RuleContext& ctx, const char** outWords) {
     outWords[2] = ctx.hourWord;
     return 3;
   }
+  // Kein ZWANZIG: bei :23/:24 ist "FÜNF VOR HALB [h+1]" deutlich naeher
+  // (2/1 LEDs) als der "ZEHN VOR HALB"-Fallback (3/4 LEDs). Braucht kein
+  // Sonderwort, nur FUENF/VOR/HALB.
+  if ((ctx.mm == 23 || ctx.mm == 24) && ctx.fallbackLevel == 0) {
+    outWords[0] = FUENF;
+    outWords[1] = VOR;
+    outWords[2] = HALB;
+    outWords[3] = getHourWord((ctx.h12 + 1) % 12);
+    return 4;
+  }
   // Fallback: ZEHN VOR HALB [h+1] - must use NEXT hour
   outWords[0] = ZEHN;
   outWords[1] = VOR;

@@ -324,13 +324,29 @@ LEDInfo calculateLEDs(
   }
 
   if (hasHalb && hasVor) {
-    // PRIORITY 10: HALB + VOR (z.B. ZEHN VOR HALB DREI bei :20-:24,
-    // FUENF VOR HALB DREI bei :25-:26 oder als Fallback :42-:44 etc.).
-    // Wort sagt floor(mm/5)*5, wir sind mm % 5 Minuten DANACH → additive,
-    // LEDs von links.
-    remainder = mm % 5;
-    isLeftDir = true;
-    result.direction = LEFT;
+    // PRIORITY 10: HALB + VOR (z.B. ZEHN VOR HALB :20-:24, FUENF VOR HALB
+    // :25-:26). Anker = Ziel-Minute des Worts: das Minutenwort DIREKT vor
+    // "VOR" entscheidet (ZEHN VOR HALB → :20, FUENF VOR HALB → :25).
+    // hasZehn/hasFunf taugen nicht, weil ZEHN/FUENF auch die Stunde sein
+    // koennen – daher die Position vor "VOR" pruefen.
+    uint8_t anchor = (mm / 5) * 5;  // Fallback
+    for (uint8_t i = 1; i < wordCount; i++) {
+      if (wordEquals(words[i], "VOR")) {
+        if (wordEquals(words[i - 1], "FuNF")) anchor = 25;
+        else if (wordEquals(words[i - 1], "ZEHN")) anchor = 20;
+        break;
+      }
+    }
+    if (mm >= anchor) {
+      remainder = mm - anchor;   // schon ueber Anker → additive
+      isLeftDir = true;
+      result.direction = LEFT;
+    } else {
+      remainder = anchor - mm;   // noch vor Anker → subtractive
+      isLeftDir = false;
+      result.direction = RIGHT;
+    }
+    if (remainder > 4) remainder = 0;
     result.count = remainder;
     result.hex = ledCountToHex(remainder, isLeftDir);
     return result;
