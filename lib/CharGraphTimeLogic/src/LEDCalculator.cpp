@@ -196,8 +196,23 @@ LEDInfo calculateLEDs(
   if (hasFast || hasBald) {
     uint8_t target;
     if (hasHalb) {
-      // PRIORITY 2: BALD/FAST + HALB → target = :30, direction = right
+      // PRIORITY 2: BALD/FAST + HALB. Anker = Ziel-Minute rund um HALB:
+      //   HALB allein        → :30
+      //   X NACH HALB        → :30 + X   (FUENF→35, ZEHN→40)
+      //   X VOR HALB         → :30 - X   (FUENF→25, ZEHN→20)
+      // Das Minutenwort steht zwei Positionen vor HALB (X NACH/VOR HALB).
       target = 30;
+      int halbIdx = -1;
+      for (uint8_t i = 0; i < wordCount; i++) {
+        if (wordEquals(words[i], "HALB")) { halbIdx = i; break; }
+      }
+      if (halbIdx >= 2) {
+        uint8_t minVal = 0;
+        if (wordEquals(words[halbIdx - 2], "FuNF")) minVal = 5;
+        else if (wordEquals(words[halbIdx - 2], "ZEHN")) minVal = 10;
+        if (wordEquals(words[halbIdx - 1], "NACH"))      target = 30 + minVal;
+        else if (wordEquals(words[halbIdx - 1], "VOR"))  target = 30 - minVal;
+      }
     } else {
       // PRIORITY 3: BALD/FAST ohne HALB. Target ueber das Minuten-Anker-
       // Wort (ZEHN NACH = :10, VIERTEL NACH = :15, VIERTEL VOR = :45 …),

@@ -284,8 +284,16 @@ static uint8_t rule_33_34(const RuleContext& ctx, const char** outWords) {
   return 3;
 }
 
-// :35-:39 - FÜNF NACH HALB
+// :35-:39 - FÜNF NACH HALB (oder FAST ZEHN NACH HALB bei :38/:39, wenn FAST)
 static uint8_t rule_35_39(const RuleContext& ctx, const char** outWords) {
+  if ((ctx.mm == 38 || ctx.mm == 39) && ctx.hasFast && ctx.fallbackLevel == 0) {
+    outWords[0] = FAST;
+    outWords[1] = ZEHN;
+    outWords[2] = NACH;
+    outWords[3] = HALB;
+    outWords[4] = ctx.hourWord;
+    return 5;
+  }
   outWords[0] = FUENF;
   outWords[1] = NACH;
   outWords[2] = HALB;
