@@ -40,8 +40,17 @@ static uint8_t rule_01_02(const RuleContext& ctx, const char** outWords) {
   return 2;
 }
 
-// :03-:04 - NACH (oder KURZ NACH, wenn KURZ im Pattern)
+// :03-:04 - FAST FÜNF NACH (naeher) > KURZ NACH > NACH
 static uint8_t rule_03_04(const RuleContext& ctx, const char** outWords) {
+  // FAST FÜNF NACH [h]: Anker :05 → 2/1 LEDs rechts, naeher als KURZ NACH
+  // (Anker :00, 3/4 LEDs links).
+  if (ctx.hasFast && ctx.fallbackLevel == 0) {
+    outWords[0] = FAST;
+    outWords[1] = FUENF;
+    outWords[2] = NACH;
+    outWords[3] = ctx.hourWord;
+    return 4;
+  }
   if (ctx.hasKurz && ctx.fallbackLevel == 0) {
     outWords[0] = KURZ;
     outWords[1] = NACH;
@@ -85,6 +94,16 @@ static uint8_t rule_10_14(const RuleContext& ctx, const char** outWords) {
 
 // :15-:19 - VIERTEL NACH (with fallback support)
 static uint8_t rule_15_19(const RuleContext& ctx, const char** outWords) {
+  // Bei :18/:19 + FAST: "FAST ZEHN VOR HALB [h+1]" – Anker :20, 2/1 LEDs
+  // rechts, naeher als "VIERTEL NACH" (Anker :15, 3/4 LEDs links).
+  if ((ctx.mm == 18 || ctx.mm == 19) && ctx.hasFast && ctx.fallbackLevel == 0) {
+    outWords[0] = FAST;
+    outWords[1] = ZEHN;
+    outWords[2] = VOR;
+    outWords[3] = HALB;
+    outWords[4] = getHourWord((ctx.h12 % 12) + 1);
+    return 5;
+  }
   if (ctx.fallbackLevel == 0) {
     // Primary: VIERTEL NACH [h]
     // BUT: Check if NACH comes BEFORE VIERTEL in pattern
