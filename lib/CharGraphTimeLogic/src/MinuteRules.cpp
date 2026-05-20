@@ -175,14 +175,17 @@ static uint8_t rule_20_24(const RuleContext& ctx, const char** outWords) {
     return 3;
   }
   // Kein ZWANZIG: bei :23/:24 ist "FÜNF VOR HALB [h+1]" deutlich naeher
-  // (2/1 LEDs) als der "ZEHN VOR HALB"-Fallback (3/4 LEDs). Braucht kein
-  // Sonderwort, nur FUENF/VOR/HALB.
+  // (2/1 LEDs) als der "ZEHN VOR HALB"-Fallback (3/4 LEDs). Mit FAST im
+  // Pattern wird "FAST" vorangestellt – LED-Zahl bleibt gleich (Anker :25
+  // ueber Priority 2), betont aber sprachlich die Annaeherung.
   if ((ctx.mm == 23 || ctx.mm == 24) && ctx.fallbackLevel == 0) {
-    outWords[0] = FUENF;
-    outWords[1] = VOR;
-    outWords[2] = HALB;
-    outWords[3] = getHourWord((ctx.h12 + 1) % 12);
-    return 4;
+    uint8_t i = 0;
+    if (ctx.hasFast) outWords[i++] = FAST;
+    outWords[i++] = FUENF;
+    outWords[i++] = VOR;
+    outWords[i++] = HALB;
+    outWords[i++] = getHourWord((ctx.h12 + 1) % 12);
+    return i;
   }
   // Fallback: ZEHN VOR HALB [h+1] - must use NEXT hour
   outWords[0] = ZEHN;
@@ -288,8 +291,18 @@ static uint8_t rule_31_32(const RuleContext& ctx, const char** outWords) {
   return 3;
 }
 
-// :33-:34 - NACH HALB (oder KURZ NACH HALB, wenn KURZ im Pattern)
+// :33-:34 - FAST FÜNF NACH HALB (naeher) > KURZ NACH HALB > NACH HALB
 static uint8_t rule_33_34(const RuleContext& ctx, const char** outWords) {
+  // FAST FÜNF NACH HALB [h]: Anker :35 → 2/1 LEDs rechts, naeher als
+  // KURZ NACH HALB (Anker :30, 3/4 LEDs links). Spiegelbild zu :03/:04.
+  if (ctx.hasFast && ctx.fallbackLevel == 0) {
+    outWords[0] = FAST;
+    outWords[1] = FUENF;
+    outWords[2] = NACH;
+    outWords[3] = HALB;
+    outWords[4] = ctx.hourWord;
+    return 5;
+  }
   if (ctx.hasKurz && ctx.fallbackLevel == 0) {
     outWords[0] = KURZ;
     outWords[1] = NACH;
