@@ -293,7 +293,7 @@ static uint8_t rule_35_39(const RuleContext& ctx, const char** outWords) {
   return 4;
 }
 
-// :40-:44 - ZEHN NACH HALB / ZWANZIG VOR / FAST VIERTEL VOR (with fallback)
+// :40-:44 - ZEHN NACH HALB / ZWANZIG VOR / (FAST) VIERTEL VOR (with fallback)
 static uint8_t rule_40_44(const RuleContext& ctx, const char** outWords) {
   // Bei :43/:44 + FAST: "FAST VIERTEL VOR [h]" – naeher dran als ZWANZIG VOR
   if ((ctx.mm == 43 || ctx.mm == 44) && ctx.hasFast && ctx.fallbackLevel == 0) {
@@ -306,6 +306,15 @@ static uint8_t rule_40_44(const RuleContext& ctx, const char** outWords) {
   if (ctx.fallbackLevel == 0 && ctx.hasZwanzig) {
     // Primary: ZWANZIG VOR [h]
     outWords[0] = ZWANZIG;
+    outWords[1] = VOR;
+    outWords[2] = ctx.hourWord;
+    return 3;
+  }
+  // Kein ZWANZIG (und kein FAST): bei :43/:44 ist "VIERTEL VOR [h]" naeher
+  // (2/1 LEDs rechts) als der "ZEHN NACH HALB"-Fallback (3/4 LEDs links).
+  // Braucht kein Sonderwort.
+  if ((ctx.mm == 43 || ctx.mm == 44) && ctx.fallbackLevel == 0) {
+    outWords[0] = VIERTEL;
     outWords[1] = VOR;
     outWords[2] = ctx.hourWord;
     return 3;
