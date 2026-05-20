@@ -12,6 +12,14 @@ unsigned long lastSyncTime = 0;
 float driftRate = 0.0;
 int syncCount = 0;
 
+// RTC-Drift-Kalibrierung: misst, wie stark die verbaute RTC pro Tag von der
+// echten (NTP-)Zeit abweicht, und kompensiert das beim Auslesen – auch im
+// Offline-Betrieb. rtcDriftRate > 0 = RTC geht VOR.
+float rtcDriftRate = 0.0;             // gemessene Drift in Sekunden/Tag
+bool rtcDriftLocked = false;          // true = Rate fixiert, keine Neumessung
+unsigned long rtcCalibRealTime = 0;   // echte (NTP-)Zeit am Referenzpunkt
+unsigned long rtcCalibRtcValue = 0;   // RTC-Rohwert am Referenzpunkt
+
 int8_t isConfigured = 0xFF;
 
 const unsigned long AP_TIMEOUT = 300000;

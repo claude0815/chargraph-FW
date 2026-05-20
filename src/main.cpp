@@ -549,6 +549,95 @@ void saveDriftRate() {
     EEPROM.commit();
 }
 
+void loadRTCDrift() {
+    byte b[4];
+    for (int i = 0; i < 4; i++) b[i] = EEPROM.read(ADDR_RTC_DRIFT_RATE + i);
+    rtcDriftRate = *((float*)b);
+
+    rtcDriftLocked = (EEPROM.read(ADDR_RTC_DRIFT_LOCKED) == RTC_DRIFT_LOCK_MAGIC);
+
+    rtcCalibRealTime = 0;
+    rtcCalibRealTime |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_REAL)) << 24;
+    rtcCalibRealTime |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_REAL + 1)) << 16;
+    rtcCalibRealTime |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_REAL + 2)) << 8;
+    rtcCalibRealTime |= EEPROM.read(ADDR_RTC_CALIB_REAL + 3);
+
+    rtcCalibRtcValue = 0;
+    rtcCalibRtcValue |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_RTC)) << 24;
+    rtcCalibRtcValue |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_RTC + 1)) << 16;
+    rtcCalibRtcValue |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_RTC + 2)) << 8;
+    rtcCalibRtcValue |= EEPROM.read(ADDR_RTC_CALIB_RTC + 3);
+
+    // Plausibilitaet: Drift max. +/-60 s/Tag, Referenzzeiten erst ab 2025
+    if (isnan(rtcDriftRate) || rtcDriftRate < -60.0 || rtcDriftRate > 60.0) rtcDriftRate = 0.0;
+    if (rtcCalibRealTime < 1735689600) { rtcCalibRealTime = 0; rtcCalibRtcValue = 0; }
+}
+
+void saveRTCDrift() {
+    byte* b = (byte*)&rtcDriftRate;
+    for (int i = 0; i < 4; i++) EEPROM.write(ADDR_RTC_DRIFT_RATE + i, b[i]);
+
+    EEPROM.write(ADDR_RTC_DRIFT_LOCKED, rtcDriftLocked ? RTC_DRIFT_LOCK_MAGIC : 0);
+
+    EEPROM.write(ADDR_RTC_CALIB_REAL,     (rtcCalibRealTime >> 24) & 0xFF);
+    EEPROM.write(ADDR_RTC_CALIB_REAL + 1, (rtcCalibRealTime >> 16) & 0xFF);
+    EEPROM.write(ADDR_RTC_CALIB_REAL + 2, (rtcCalibRealTime >> 8) & 0xFF);
+    EEPROM.write(ADDR_RTC_CALIB_REAL + 3, rtcCalibRealTime & 0xFF);
+
+    EEPROM.write(ADDR_RTC_CALIB_RTC,     (rtcCalibRtcValue >> 24) & 0xFF);
+    EEPROM.write(ADDR_RTC_CALIB_RTC + 1, (rtcCalibRtcValue >> 16) & 0xFF);
+    EEPROM.write(ADDR_RTC_CALIB_RTC + 2, (rtcCalibRtcValue >> 8) & 0xFF);
+    EEPROM.write(ADDR_RTC_CALIB_RTC + 3, rtcCalibRtcValue & 0xFF);
+
+    EEPROM.commit();
+}
+
+// Liest die RTC und rechnet die akkumulierte Drift seit dem Referenzpunkt
+// heraus. Ohne gueltige Kalibrierung wird der Rohwert zurueckgegeben.
+unsigned long getCorrectedRTCTime() {
+    if (!rtc.begin() || !rtc.isrunning()) return 0;
+    unsigned long raw = rtc.now().unixtime();
+    if (rtcDriftRate != 0.0 && rtcCalibRtcValue > 0 && raw > rtcCalibRtcValue) {
+        float daysSince = (float)(raw - rtcCalibRtcValue) / 86400.0;
+        long correction = (long)(rtcDriftRate * daysSince);
+        return raw - correction;
+    }
+    return raw;
+}
+
+// Bei jedem erfolgreichen NTP-Sync aufgerufen. Setzt beim ersten Mal den
+// Referenzpunkt, danach wird die Drift-Rate aus der vergangenen Periode
+// neu berechnet (je laenger, desto genauer). Bei rtcDriftLocked bleibt die
+// Rate unveraendert.
+void updateRTCDriftCalibration(unsigned long ntpRealTime) {
+    if (!rtc.begin() || !rtc.isrunning()) return;
+    unsigned long raw = rtc.now().unixtime();
+
+    if (rtcCalibRealTime == 0 || rtcCalibRtcValue == 0) {
+        rtcCalibRealTime = ntpRealTime;
+        rtcCalibRtcValue = raw;
+        saveRTCDrift();
+        DEBUG_PRINTLN("✓ RTC-Drift: Referenzpunkt gesetzt");
+        return;
+    }
+
+    if (rtcDriftLocked) return;
+
+    long realElapsed = (long)ntpRealTime - (long)rtcCalibRealTime;
+    if (realElapsed < 3600) return;  // mind. 1h fuer eine sinnvolle Messung
+
+    long rtcElapsed = (long)raw - (long)rtcCalibRtcValue;
+    long driftSec   = rtcElapsed - realElapsed;  // + = RTC zu schnell
+    float newRate   = (float)driftSec * 86400.0 / (float)realElapsed;
+
+    if (newRate < -60.0 || newRate > 60.0) return;  // unplausibel, ignorieren
+
+    rtcDriftRate = newRate;
+    saveRTCDrift();
+    DEBUG_PRINTF("✓ RTC-Drift gemessen: %.2f s/Tag (Periode %ld h)\n",
+                 rtcDriftRate, realElapsed / 3600);
+}
+
 // ════════════════════════════════════════════════════════════════
 // OTA VERSION MANAGEMENT
 // ════════════════════════════════════════════════════════════════
@@ -1116,8 +1205,7 @@ void getCurrentTime(int &hours, int &minutes, int &seconds) {
     
     if (currentMillis - lastRTCSync > 86400000 || lastRTCSync > currentMillis) {
         if (rtc.begin() && rtc.isrunning()) {
-            DateTime rtcNow = rtc.now();
-            unsigned long rtcTime = rtcNow.unixtime();
+            unsigned long rtcTime = getCorrectedRTCTime();  // driftkompensiert
             long drift = currentSeconds - rtcTime;
             
             if (abs(drift) > 30) {
@@ -1211,10 +1299,38 @@ void handleGetTime() {
     json += "\"driftRate\":" + String(driftRate, 3) + ",";
     json += "\"syncCount\":" + String(syncCount) + ",";
     json += "\"uptime\":" + String(millis() / 1000) + ",";
-    json += "\"powerLoss\":" + String(powerLossDetected ? "true" : "false");
+    json += "\"powerLoss\":" + String(powerLossDetected ? "true" : "false") + ",";
+    json += "\"rtcDriftRate\":" + String(rtcDriftRate, 2) + ",";
+    json += "\"rtcDriftLocked\":" + String(rtcDriftLocked ? "true" : "false") + ",";
+    {
+        // Dauer der laufenden Messung in Stunden (0 = noch kein Referenzpunkt)
+        unsigned long elapsedH = 0;
+        if (rtcCalibRealTime > 0 && lastSyncTime > rtcCalibRealTime) {
+            elapsedH = (lastSyncTime - rtcCalibRealTime) / 3600UL;
+        }
+        json += "\"rtcCalibHours\":" + String(elapsedH);
+    }
     json += "}";
 
     server.send(200, "application/json", json);
+}
+
+void handleRTCDriftLock() {
+    if (server.hasArg("locked")) {
+        rtcDriftLocked = (server.arg("locked") == "1" || server.arg("locked") == "true");
+        saveRTCDrift();
+    }
+    server.send(200, "application/json",
+                String("{\"rtcDriftLocked\":") + (rtcDriftLocked ? "true" : "false") + "}");
+}
+
+void handleRTCDriftReset() {
+    rtcDriftRate = 0.0;
+    rtcDriftLocked = false;
+    rtcCalibRealTime = 0;
+    rtcCalibRtcValue = 0;
+    saveRTCDrift();
+    server.send(200, "text/plain", "OK - RTC-Drift zurueckgesetzt");
 }
 
 void clearPowerLossWarning();  // Forward-Declaration, Definition weiter unten
@@ -2618,6 +2734,7 @@ void setupNTP()
         lastNtpSync = now;
         lastSyncTime = now;  // WICHTIG: Für Drift-Korrektur
         ntpSyncSuccessful = true;
+        updateRTCDriftCalibration(now);  // RTC-Drift messen/kalibrieren
         saveNTPConfig();  // Speichere letzten Sync
         saveDriftRate();  // Speichere auch lastSyncTime
 
@@ -2675,6 +2792,7 @@ void checkNTPSync() {
         lastNtpSync = now;
         lastSyncTime = now;  // WICHTIG: Für Drift-Korrektur
         ntpSyncSuccessful = true;
+        updateRTCDriftCalibration(now);  // RTC-Drift messen/kalibrieren
         saveNTPConfig();
         saveDriftRate();  // Speichere auch lastSyncTime
 
@@ -2816,6 +2934,7 @@ void setup()
 
     loadConfig();
     loadDriftRate();
+    loadRTCDrift();
     loadOTAVersion();
     loadWiFiStationConfig();
     loadNTPConfig();
@@ -2859,6 +2978,8 @@ void setup()
     server.on("/gettime", handleGetTime);
     server.on("/colors/get", handleGetColors);
     server.on("/powerloss/clear", handlePowerLossClear);
+    server.on("/rtcdrift/lock", handleRTCDriftLock);
+    server.on("/rtcdrift/reset", handleRTCDriftReset);
     server.on("/getcharsoap", handleGetCharsoap);
     server.on("/resetcharsoap", handleResetCharsoap);
     server.on("/ledtest", handleLEDTest);

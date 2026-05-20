@@ -99,6 +99,12 @@
 #define ADDR_USE_RAINBOW          614    // Regenbogenfarben fuer Uhrzeit (1 byte, Magic)
 #define RAINBOW_MAGIC             0xA5
 
+#define ADDR_RTC_DRIFT_RATE       615    // RTC-Drift in s/Tag (float, 4 bytes)
+#define ADDR_RTC_DRIFT_LOCKED     619    // Drift-Rate fixiert (1 byte, Magic)
+#define ADDR_RTC_CALIB_REAL       620    // echte Zeit am Referenzpunkt (4 bytes)
+#define ADDR_RTC_CALIB_RTC        624    // RTC-Rohwert am Referenzpunkt (4 bytes)
+#define RTC_DRIFT_LOCK_MAGIC      0x5A
+
 #define SPECIAL_WORD_MODE_OFF      0
 #define SPECIAL_WORD_MODE_INTERVAL 1
 #define SPECIAL_WORD_MODE_PARALLEL 2
