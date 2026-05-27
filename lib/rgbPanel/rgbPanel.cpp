@@ -371,7 +371,12 @@ int setWordAuto(const char* word, int occurrence, bool searchBackward)
     int ledIndices[length];
     getLedsFromPosition(pos, length, ledIndices);
     for (int i = 0; i < length; i++) {
-        leds[bridgeLED(ledIndices[i])] = colorForLed(ledIndices[i]);
+        // Wichtig: Regenbogen-Hue ueber die LOGISCHE Position (pos + i) im
+        // charsoap-String rechnen. ledIndices[i] kommt aus getLedsFromPosition
+        // und ist bei ungeraden Zeilen wegen der Boustrophedon-Verkabelung
+        // horizontal gespiegelt – damit waere row+col falsch und die Farbe
+        // wuerde zur Spiegel-Position gehoeren.
+        leds[bridgeLED(ledIndices[i])] = colorForLed(pos + i);
     }
     return pos;
 }
