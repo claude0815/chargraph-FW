@@ -501,12 +501,31 @@ void saveConfig() {
     EEPROM.write(ADDR_SPECIAL_G, specialColor.g);
     EEPROM.write(ADDR_SPECIAL_B, specialColor.b);
     EEPROM.write(ADDR_CONFIGURED, MAGIC_BYTE_INIT);
-    
-    EEPROM.write(ADDR_TIMESTAMP, (bootTime >> 24) & 0xFF);
-    EEPROM.write(ADDR_TIMESTAMP + 1, (bootTime >> 16) & 0xFF);
-    EEPROM.write(ADDR_TIMESTAMP + 2, (bootTime >> 8) & 0xFF);
-    EEPROM.write(ADDR_TIMESTAMP + 3, bootTime & 0xFF);
-    
+
+    // WICHTIG: aktuelle Uhrzeit speichern, NICHT bootTime roh.
+    // bootTime = Unix-Zeit zu millis()=0 dieser Session, die echte aktuelle
+    // Zeit ist bootTime + millis()/1000. Wird in detectPowerLossWithRTC()
+    // als "letzte bekannte Zeit" gelesen.
+    unsigned long nowSec = bootTime + (millis() / 1000);
+    EEPROM.write(ADDR_TIMESTAMP, (nowSec >> 24) & 0xFF);
+    EEPROM.write(ADDR_TIMESTAMP + 1, (nowSec >> 16) & 0xFF);
+    EEPROM.write(ADDR_TIMESTAMP + 2, (nowSec >> 8) & 0xFF);
+    EEPROM.write(ADDR_TIMESTAMP + 3, nowSec & 0xFF);
+
+    EEPROM.commit();
+}
+
+// Schreibt nur die aktuelle Uhrzeit nach ADDR_TIMESTAMP – wird periodisch
+// (alle 60 min) aus loop() und nach jedem NTP-Sync gerufen, damit
+// detectPowerLossWithRTC beim naechsten Boot den Stromausfall-Zeitraum
+// korrekt rechnen kann (sonst stuende dort nur die Zeit vom letzten
+// manuellen Speichern).
+void saveLastKnownTime() {
+    unsigned long nowSec = bootTime + (millis() / 1000);
+    EEPROM.write(ADDR_TIMESTAMP, (nowSec >> 24) & 0xFF);
+    EEPROM.write(ADDR_TIMESTAMP + 1, (nowSec >> 16) & 0xFF);
+    EEPROM.write(ADDR_TIMESTAMP + 2, (nowSec >> 8) & 0xFF);
+    EEPROM.write(ADDR_TIMESTAMP + 3, nowSec & 0xFF);
     EEPROM.commit();
 }
 
@@ -2735,6 +2754,7 @@ void setupNTP()
         lastSyncTime = now;  // WICHTIG: Für Drift-Korrektur
         ntpSyncSuccessful = true;
         updateRTCDriftCalibration(now);  // RTC-Drift messen/kalibrieren
+        saveLastKnownTime();             // damit Power-Loss-Schwelle richtig rechnet
         saveNTPConfig();  // Speichere letzten Sync
         saveDriftRate();  // Speichere auch lastSyncTime
 
@@ -2793,6 +2813,7 @@ void checkNTPSync() {
         lastSyncTime = now;  // WICHTIG: Für Drift-Korrektur
         ntpSyncSuccessful = true;
         updateRTCDriftCalibration(now);  // RTC-Drift messen/kalibrieren
+        saveLastKnownTime();             // damit Power-Loss-Schwelle richtig rechnet
         saveNTPConfig();
         saveDriftRate();  // Speichere auch lastSyncTime
 
@@ -2952,6 +2973,10 @@ void setup()
         // ein Reset waehrend des Stromausfall-Modus den Marker auf 'lief'
         // setzen, ohne dass der User die Zeit jemals quittiert hat.
         setRunningFlag();
+        // Frischen "letzte bekannte Zeit"-Wert ablegen, sonst koennte ein
+        // schneller Stromaus kurz nach dem Boot den naechsten Check noch
+        // gegen den 8 Tage alten Wert laufen lassen.
+        saveLastKnownTime();
     }
 
     // User-Helligkeit (0-80) auf LED-Helligkeit (0-204) mappen
@@ -3091,6 +3116,16 @@ void loop()
 
       // NTP-Sync prüfen (stündlich)
       checkNTPSync();
+
+      // Aktuelle Uhrzeit stündlich ins EEPROM schreiben, damit
+      // detectPowerLossWithRTC beim naechsten Boot den echten
+      // Offline-Zeitraum kennt (ohne diesen Save staende dort nur
+      // die Zeit vom letzten manuellen Speichern).
+      static unsigned long lastTimePersist = 0;
+      if (millis() - lastTimePersist > 3600000UL) {  // 60 min
+          saveLastKnownTime();
+          lastTimePersist = millis();
+      }
 
       #if defined(DEBUG_MODE) && (DEBUG_MODE == false)
         #warning "WiFi AP: Timeout nur wenn keine Station konfiguriert"
