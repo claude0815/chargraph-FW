@@ -29,6 +29,7 @@
   extern const char DEFAULT_CHARSOAP[];
   extern char SPECIAL_WORD[MAXWORDS][SPECIAL_WORD_LENGTH];  // MAXWORDS = 3
   extern bool useRainbow;
+  extern uint8_t specialBrightness;
 
   extern void showLEDs();
   extern int bridgeLED(int pos);

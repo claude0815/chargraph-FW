@@ -973,7 +973,19 @@
                 <div class="color-box" id="previewSpecial"></div>
             </div>
         </div>
-        
+
+        <div class="form-group">
+            <label>✨ Helligkeit Spezialtext (% relativ):</label>
+            <input type="range" id="specialBrightness" min="0" max="100" value="100"
+                   oninput="document.getElementById('specialBrightnessValue').innerHTML = this.value">
+            <div class="range-value" id="specialBrightnessValue">100</div>
+            <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                Skaliert die Spezialwort-Farbe vor dem Rendern. 100 = volle
+                Farbe (wie bisher), 50 = halb so hell, 0 = aus. Wirkt
+                zus&auml;tzlich zur Haupthelligkeit.
+            </div>
+        </div>
+
         <div class="form-group">
             <label>💡 Helligkeit:</label>
             <input type="range" id="brightness" min="10" max="80" value="80" 
@@ -1683,6 +1695,11 @@
                         const bv = document.getElementById('brightnessValue');
                         if (bv) bv.innerHTML = data.brightness;
                     }
+                    if (data.specialBrightness !== undefined) {
+                        document.getElementById('specialBrightness').value = data.specialBrightness;
+                        const sbv = document.getElementById('specialBrightnessValue');
+                        if (sbv) sbv.innerHTML = data.specialBrightness;
+                    }
                     document.getElementById('useRainbow').checked = !!data.rainbow;
                     updatePreview();
                 })
@@ -1698,6 +1715,7 @@
             const specialRGB = hexToRgb(specialColor);
 
             const rainbow = document.getElementById('useRainbow').checked ? 1 : 0;
+            const specialBrightness = document.getElementById('specialBrightness').value;
 
             // Nur Farben & Helligkeit speichern
             const url = '/save?timestamp=0' +  // 0 = Zeit nicht ändern
@@ -1705,6 +1723,7 @@
                        '&nr=' + normalRGB.r + '&ng=' + normalRGB.g + '&nb=' + normalRGB.b +
                        '&sr=' + specialRGB.r + '&sg=' + specialRGB.g + '&sb=' + specialRGB.b +
                        '&rainbow=' + rainbow +
+                       '&specialBrightness=' + specialBrightness +
                        '&brightness=' + brightness +
                        '&charsoap=';  // Leer = nicht ändern
 

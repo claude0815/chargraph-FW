@@ -149,6 +149,18 @@ int setWordOnlyIfFree(const char* word, CRGB color, int occurrence, bool searchB
     return painted;
 }
 
+// specialColor um specialBrightness (0..100 %) skaliert. So lassen sich die
+// Sonderwoerter relativ zur Uhrzeit dimmen, ohne die globale FastLED-
+// Helligkeit anzufassen.
+static CRGB scaledSpecialColor() {
+    CRGB c = specialColor;
+    uint8_t s = specialBrightness;
+    if (s >= 100) return c;
+    uint8_t scale = (uint16_t)s * 255 / 100;
+    c.nscale8(scale);
+    return c;
+}
+
 // Wie displayTime(), zeigt aber zusaetzlich die Spezialwoerter parallel:
 // Erst die Uhrzeit rendern, dann die Spezialwoerter mit specialColor an
 // allen Buchstaben overlayen, die nicht von der Uhrzeit belegt sind.
@@ -156,9 +168,10 @@ void displayTimeWithSpecial(int hours, int minutes)
 {
   displayTime(hours, minutes);
 
+  CRGB sc = scaledSpecialColor();
   for (uint i = 0; i < MAXWORDS; i++) {
     if (SPECIAL_WORD[i][0] == '\0') continue;
-    setWordOnlyIfFree(SPECIAL_WORD[i], specialColor, 0);
+    setWordOnlyIfFree(SPECIAL_WORD[i], sc, 0);
   }
   noInterrupts();
   showLEDs();
@@ -176,7 +189,8 @@ void showSpecialWordThenTime(int hours, int minutes)
   fadeOutAll();
 
   // 2) Spezialwort-Sequenz (falls im Layout vorhanden), Farbe: specialColor
-  showSpecialWordSequence(SPECIAL_WORD, specialColor);
+  //    mit der per UI eingestellten Sonderwort-Helligkeit skaliert.
+  showSpecialWordSequence(SPECIAL_WORD, scaledSpecialColor());
 
   // 3) Bisherigen Frame ausblenden
   fadeOutAll();

@@ -443,6 +443,10 @@ void loadConfig() {
         specialColor.r = EEPROM.read(ADDR_SPECIAL_R);
         specialColor.g = EEPROM.read(ADDR_SPECIAL_G);
         specialColor.b = EEPROM.read(ADDR_SPECIAL_B);
+        {
+            uint8_t sb = EEPROM.read(ADDR_SPECIAL_BRIGHTNESS);
+            specialBrightness = (sb > 100 || sb == 0xFF) ? 100 : sb;
+        }
 
         unsigned long savedTime = 0;
         savedTime |= ((unsigned long)EEPROM.read(ADDR_TIMESTAMP)) << 24;
@@ -500,6 +504,7 @@ void saveConfig() {
     EEPROM.write(ADDR_SPECIAL_R, specialColor.r);
     EEPROM.write(ADDR_SPECIAL_G, specialColor.g);
     EEPROM.write(ADDR_SPECIAL_B, specialColor.b);
+    EEPROM.write(ADDR_SPECIAL_BRIGHTNESS, specialBrightness);
     EEPROM.write(ADDR_CONFIGURED, MAGIC_BYTE_INIT);
 
     // WICHTIG: aktuelle Uhrzeit speichern, NICHT bootTime roh.
@@ -1285,6 +1290,7 @@ void handleGetColors() {
     json += "\"sr\":" + String(specialColor.r) + ",";
     json += "\"sg\":" + String(specialColor.g) + ",";
     json += "\"sb\":" + String(specialColor.b) + ",";
+    json += "\"specialBrightness\":" + String(specialBrightness) + ",";
     json += "\"brightness\":" + String(brightness) + ",";
     json += "\"rainbow\":" + String(useRainbow ? "true" : "false");
     json += "}";
@@ -1599,7 +1605,13 @@ void handleSave() {
         specialColor.r = server.arg("sr").toInt();
         specialColor.g = server.arg("sg").toInt();
         specialColor.b = server.arg("sb").toInt();
-        
+        if (server.hasArg("specialBrightness")) {
+            int sb = server.arg("specialBrightness").toInt();
+            if (sb < 0) sb = 0;
+            if (sb > 100) sb = 100;
+            specialBrightness = (uint8_t)sb;
+        }
+
         brightness = server.arg("brightness").toInt();
 
         if (server.hasArg("charsoap")) {

@@ -105,6 +105,8 @@
 #define ADDR_RTC_CALIB_RTC        624    // RTC-Rohwert am Referenzpunkt (4 bytes)
 #define RTC_DRIFT_LOCK_MAGIC      0x5A
 
+#define ADDR_SPECIAL_BRIGHTNESS   628    // Helligkeit Sonderwoerter in % (1 byte, 0-100)
+
 #define SPECIAL_WORD_MODE_OFF      0
 #define SPECIAL_WORD_MODE_INTERVAL 1
 #define SPECIAL_WORD_MODE_PARALLEL 2

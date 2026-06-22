@@ -103,6 +103,11 @@ uint8_t specialWordMode = SPECIAL_WORD_MODE_INTERVAL;  // Anzeige-Modus (0=off, 
 // Spezialwoerter behalten ihre specialColor.
 bool useRainbow = false;
 
+// Helligkeit der Sonderwoerter relativ zur normalen Anzeige (0-100 %).
+// 100 = volle specialColor, 50 = halb so hell, 0 = aus. Wirkt zusaetzlich
+// zur globalen FastLED-Helligkeit.
+uint8_t specialBrightness = 100;
+
 // ════════════════════════════════════════════════════════════════
 // PATTERN TEST VARIABLEN
 // ════════════════════════════════════════════════════════════════
