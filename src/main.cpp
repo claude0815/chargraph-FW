@@ -3044,8 +3044,13 @@ void setup()
     apStartTime = millis();
     
     DEBUG_PRINTLN("✓ System bereit!\n");
-    FastLED.clear(true); 
-    FastLED.setBrightness(0);
+    // Initial-Frame schwarz zeigen, aber die zuvor gesetzte User-Helligkeit
+    // beibehalten – sonst bleibt der Strip nach dem Boot dunkel (displayTime
+    // setzt die Brightness bewusst nicht mehr, damit Auto-Brightness nicht
+    // ueberschrieben wird). Frueher stand hier setBrightness(0) und funk-
+    // tionierte nur, weil displayTime damals zusaetzlich setBrightness(80)
+    // rief.
+    FastLED.clear(true);
     yield();
     delay(1000);
 }
