@@ -602,9 +602,11 @@
                 Kalibrierung zur&uuml;cksetzen
             </button>
             <div style="font-size: 12px; color: #666; margin-top: 6px;">
-                Die Uhr misst im WLAN automatisch, wie stark die RTC pro Tag
-                abweicht (+ = geht vor), und korrigiert das auch offline. Je
-                l&auml;nger die Messdauer, desto genauer &ndash; ab ~48 h fixieren.
+                Die Uhr misst bei jedem NTP-Abgleich (fr&uuml;hestens alle 30&nbsp;min)
+                millisekundengenau, wie stark die RTC pro Tag abweicht (+ = geht vor),
+                stellt die RTC nach und korrigiert die Drift auch offline. Nach
+                ~24&ndash;48&nbsp;h Messdauer kann die Rate fixiert werden; die
+                Korrektur l&auml;uft dann weiter, nur die Messung stoppt.
             </div>
         </div>
 
@@ -1009,7 +1011,7 @@
                 Großbuchstaben (A-Z), Kleinbuchstaben (a-z), Ziffern (0-9) und Bindestriche (-). Genau 110 Zeichen.<br>
                 <strong style="color: #ff9800;">💡 Tipp:</strong> Umlaute werden zu lowercase: Ä→a, Ö→o, Ü→u
             </div>
-            <textarea id="charsoap" rows="11" maxlength="110" 
+            <textarea id="charsoap" rows="11" maxlength="119" 
                       oninput="validateCharsoap()"
                       onkeypress="return /[A-ZÄÖÜa-zäöü0-9-]/i.test(event.key)"></textarea>
             <div id="charsoap-info" style="margin-top: 10px; font-size: 13px;">
@@ -1289,7 +1291,7 @@
             // Beim Öffnen einer Sektion: einmaliges, frisches Laden
             if (isOpen) {
                 if (sectionId === 'section-wifi') loadWiFiConfig(true);
-                if (sectionId === 'section-autobrightness') loadAutoBrightnessConfig();
+                if (sectionId === 'section-autobrightness') loadAutoBrightnessConfig(true);
             }
             // Wird eine andere Sektion geöffnet, sind die anderen automatisch zu
             if (sectionId !== 'section-autobrightness') {
@@ -1372,9 +1374,15 @@
                     updateNTPStatus();  // NTP-Status aktualisieren
                     const banner = document.getElementById('powerLossBanner');
                     if (banner) banner.style.display = data.powerLoss ? 'block' : 'none';
-                    if (data.rtcDriftRate !== undefined) {
-                        document.getElementById('rtcDriftRate').textContent = data.rtcDriftRate;
-                        document.getElementById('rtcCalibHours').textContent = data.rtcCalibHours;
+                    if (data.rtcPresent === false) {
+                        document.getElementById('rtcDriftRate').textContent = 'keine RTC erkannt';
+                        document.getElementById('rtcCalibHours').textContent = '--';
+                    } else if (data.rtcDriftRate !== undefined) {
+                        const hours = Number(data.rtcCalibHours) || 0;
+                        const rate = Number(data.rtcDriftRate) || 0;
+                        document.getElementById('rtcDriftRate').textContent =
+                            hours > 0 ? ((rate > 0 ? '+' : '') + rate.toFixed(3)) : 'noch nicht gemessen';
+                        document.getElementById('rtcCalibHours').textContent = hours.toFixed(1);
                         const lockBox = document.getElementById('rtcDriftLocked');
                         if (lockBox && document.activeElement !== lockBox) {
                             lockBox.checked = !!data.rtcDriftLocked;
@@ -1413,11 +1421,19 @@
                 .catch(err => alert('Fehler beim Quittieren: ' + err));
         }
 
+        // Letzter bekannter NTP-Zustand. Die Radio-Buttons werden nur bei einem
+        // Wechsel umgestellt – sonst setzte der 5-s-Poll eine gerade gewaehlte
+        // "Manuell"-Auswahl sofort wieder zurueck.
+        let lastNtpState = null;
+
         function updateNTPStatus() {
             // WiFi-Config abrufen, um NTP-Status zu prüfen
             fetch('/wifi/config')
                 .then(response => response.json())
                 .then(data => {
+                    const ntpState = (data.ntpEnabled ? 'on' : 'off') + (data.staConnected ? '-sta' : '');
+                    const stateChanged = ntpState !== lastNtpState;
+                    lastNtpState = ntpState;
                     const ntpRadio = document.getElementById('ntpTime');
                     const ntpIcon = document.getElementById('ntpStatusIcon');
                     const driftRateRow = document.getElementById('driftRateRow');
@@ -1426,7 +1442,7 @@
                     if (data.ntpEnabled && data.staConnected) {
                         // NTP ist aktiviert und WiFi verbunden
                         ntpRadio.disabled = false;
-                        ntpRadio.checked = true;
+                        if (stateChanged) ntpRadio.checked = true;
                         ntpIcon.innerHTML = data.ntpSyncOk ? '✅' : '🌐';
                         ntpRadio.parentElement.style.opacity = '1';
 
@@ -1436,10 +1452,12 @@
                     } else if (data.ntpEnabled && !data.staConnected) {
                         // NTP aktiviert, aber WiFi nicht verbunden
                         ntpRadio.disabled = true;
-                        ntpRadio.checked = false;
                         ntpIcon.innerHTML = '⚠️';
                         ntpRadio.parentElement.style.opacity = '0.6';
-                        document.getElementById('autoTime').checked = true;
+                        if (ntpRadio.checked || stateChanged) {
+                            ntpRadio.checked = false;
+                            document.getElementById('autoTime').checked = true;
+                        }
 
                         // Drift-Rate und Sync-Count anzeigen (manuelle Synchronisation)
                         if (driftRateRow) driftRateRow.style.display = 'block';
@@ -1447,10 +1465,12 @@
                     } else {
                         // NTP deaktiviert
                         ntpRadio.disabled = true;
-                        ntpRadio.checked = false;
                         ntpIcon.innerHTML = '❌';
                         ntpRadio.parentElement.style.opacity = '0.6';
-                        document.getElementById('autoTime').checked = true;
+                        if (ntpRadio.checked || stateChanged) {
+                            ntpRadio.checked = false;
+                            document.getElementById('autoTime').checked = true;
+                        }
 
                         // Drift-Rate und Sync-Count anzeigen (manuelle Synchronisation)
                         if (driftRateRow) driftRateRow.style.display = 'block';
@@ -1641,6 +1661,15 @@
         // SPEICHER-FUNKTIONEN (GETRENNT)
         // ════════════════════════════════════════════════════════════════
 
+        // fetch-Antwort als Text; bei HTTP-Fehler (400/500) die Meldung des
+        // Servers als Fehler weiterreichen statt "gespeichert" anzuzeigen.
+        function checkedText(response) {
+            return response.text().then(text => {
+                if (!response.ok) throw new Error(text || ('HTTP ' + response.status));
+                return text;
+            });
+        }
+
         function saveTime() {
             let timestamp, timezoneOffset = 0;
             const isManual = document.getElementById('manualTime').checked;
@@ -1651,27 +1680,25 @@
                     alert('❌ Bitte Datum/Uhrzeit eingeben!');
                     return;
                 }
-                // Manuelle Eingabe wird als lokale Zeit interpretiert, zu UTC konvertieren
+                // Manuelle Eingabe wird vom Browser als lokale Zeit interpretiert;
+                // getTime() liefert bereits UTC (frueher wurde der Zeitzonen-
+                // Offset ein zweites Mal abgezogen -> Uhr ging 1-2 h falsch).
                 const localDate = new Date(manualDateTime);
-                const utcTimestamp = Math.floor(localDate.getTime() / 1000);
-                const offsetSeconds = localDate.getTimezoneOffset() * 60;
-                timestamp = utcTimestamp - offsetSeconds;  // Zu UTC konvertieren
+                timestamp = Math.floor(localDate.getTime() / 1000);
             } else {
                 // Sende UTC-Zeit (Date.now() ist bereits UTC)
                 timestamp = Math.floor(Date.now() / 1000);
                 timezoneOffset = 0;  // Keine Umrechnung nötig, ist bereits UTC
             }
 
-            // Nur Zeit speichern (mit Dummy-Werten für Farben/Helligkeit)
+            // Nur Zeit speichern (Farben/Helligkeit werden nicht mitgeschickt
+            // und bleiben dadurch unveraendert)
             const url = '/save?timestamp=' + timestamp +
                        '&tzoffset=' + timezoneOffset +
-                       '&nr=255&ng=255&nb=255' +  // Dummy
-                       '&sr=255&sg=255&sb=255' +  // Dummy
-                       '&brightness=80' +         // Dummy
                        '&charsoap=';              // Leer = nicht ändern
 
             fetch(url)
-                .then(response => response.text())
+                .then(checkedText)
                 .then(data => {
                     alert('✅ Uhrzeit gespeichert!');
                     setTimeout(fetchEspTime, 2000);
@@ -1728,7 +1755,7 @@
                        '&charsoap=';  // Leer = nicht ändern
 
             fetch(url)
-                .then(response => response.text())
+                .then(checkedText)
                 .then(data => {
                     alert('✅ Farbeinstellungen gespeichert!');
                 })
@@ -1748,16 +1775,13 @@
                 return;
             }
 
-            // Nur Charsoap speichern
+            // Nur Charsoap speichern (ohne Farben/Helligkeit -> bleiben unveraendert)
             const url = '/save?timestamp=0' +  // 0 = Zeit nicht ändern
                        '&tzoffset=0' +
-                       '&nr=255&ng=255&nb=255' +  // Dummy
-                       '&sr=255&sg=255&sb=255' +  // Dummy
-                       '&brightness=80' +         // Dummy
                        '&charsoap=' + encodeURIComponent(charsoap);
 
             fetch(url)
-                .then(response => response.text())
+                .then(checkedText)
                 .then(data => {
                     alert('✅ Wortmatrix gespeichert!');
                 })
@@ -2354,27 +2378,28 @@
             }, 5000);
         }
 
-        function loadAutoBrightnessConfig() {
+        // force=true: alle Eingabefelder mit den gespeicherten Werten fuellen
+        // (Seitenstart, Oeffnen der Sektion, nach dem Speichern). Der 2-s-Poll
+        // ruft ohne force auf und aktualisiert nur den aktuellen Lichtwert –
+        // frueher setzte er die Checkbox und die Regler zurueck, bevor der
+        // Benutzer auf Speichern druecken konnte.
+        function loadAutoBrightnessConfig(force) {
             fetch('/autobrightness/config')
                 .then(response => response.json())
                 .then(data => {
-                    // Config laden
-                    document.getElementById('autoBrightnessEnabled').checked = data.enabled;
-
-                    // Nur aktualisieren, wenn:
-                    // - Benutzer nicht gerade Werte anpasst
-                    // - Helligkeits-Sektion nicht geöffnet ist
-                    if (!inputHasFocus && !userIsAdjusting && !brightnessectionOpen) {
-                        document.getElementById('autoBrightnessMinADC').value = data.minADC || 200;
-                        document.getElementById('autoBrightnessMinADCValue').value = data.minADC || 200;
-                        document.getElementById('autoBrightnessMaxADC').value = data.maxADC || 820;
-                        document.getElementById('autoBrightnessMaxADCValue').value = data.maxADC || 820;
+                    const num = (v, def) => (v === undefined || v === null) ? def : v;  // 0 ist gueltig
+                    if (force && !inputHasFocus && !userIsAdjusting) {
+                        document.getElementById('autoBrightnessEnabled').checked = !!data.enabled;
+                        document.getElementById('autoBrightnessMinADC').value = num(data.minADC, 200);
+                        document.getElementById('autoBrightnessMinADCValue').value = num(data.minADC, 200);
+                        document.getElementById('autoBrightnessMaxADC').value = num(data.maxADC, 820);
+                        document.getElementById('autoBrightnessMaxADCValue').value = num(data.maxADC, 820);
 
                         // Helligkeits-Bereich laden
-                        document.getElementById('autoBrightnessMin').value = data.minBrightness || 0;
-                        document.getElementById('autoBrightnessMinValue').value = data.minBrightness || 0;
-                        document.getElementById('autoBrightnessMax').value = data.maxBrightness || 80;
-                        document.getElementById('autoBrightnessMaxValue').value = data.maxBrightness || 80;
+                        document.getElementById('autoBrightnessMin').value = num(data.minBrightness, 0);
+                        document.getElementById('autoBrightnessMinValue').value = num(data.minBrightness, 0);
+                        document.getElementById('autoBrightnessMax').value = num(data.maxBrightness, 80);
+                        document.getElementById('autoBrightnessMaxValue').value = num(data.maxBrightness, 80);
 
                         // Spannungen und Prozente aktualisieren
                         updateADCPreview();
@@ -2421,7 +2446,7 @@
             params.append('maxBrightness', parseInt(document.getElementById('autoBrightnessMax').value));
 
             fetch('/autobrightness/save?' + params.toString())
-                .then(response => response.text())
+                .then(checkedText)
                 .then(data => {
                     alert('✓ ' + data);
 
@@ -2432,7 +2457,7 @@
                         adjustingTimeout = null;
                     }
 
-                    loadAutoBrightnessConfig();  // Reload
+                    loadAutoBrightnessConfig(true);  // Reload
                 })
                 .catch(error => {
                     alert('❌ Fehler beim Speichern: ' + error);
@@ -2666,7 +2691,7 @@
             loadColors();
             loadOTAInfo();
             loadWiFiConfig();
-            loadAutoBrightnessConfig();
+            loadAutoBrightnessConfig(true);
 
             setInterval(updateBrowserTime, 1000);
             setInterval(fetchEspTime, 5000);
@@ -2790,7 +2815,16 @@
         function saveSpecialWords() {
             const words = [];
             for (let i = 0; i < 3; i++) {
-                const word = document.getElementById('specialword' + i).value.trim();
+                // Umlaute belegen im Pattern nur EIN Zeichen (Ü -> u), als UTF-8
+                // aber 2 Bytes – ungewandelt passte "MÜNCHEN" nie zum Pattern.
+                const word = document.getElementById('specialword' + i).value
+                    .replace(/\s/g, '')
+                    .replace(/[äÄ]/g, 'A').replace(/[öÖ]/g, 'O').replace(/[üÜ]/g, 'U')
+                    .toUpperCase();
+                if (!/^[A-Z0-9\-]*$/.test(word)) {
+                    alert('❌ Wort ' + (i+1) + ': nur Buchstaben, Ziffern und Bindestriche erlaubt!');
+                    return;
+                }
                 if (word.length > 11) {
                     alert('❌ Wort ' + (i+1) + ' zu lang (max 11 Zeichen)!');
                     return;
@@ -2810,7 +2844,7 @@
             params.append('mode', mode);
 
             fetch('/specialwords/save?' + params.toString())
-                .then(response => response.text())
+                .then(checkedText)
                 .then(data => {
                     alert('✅ Spezialwörter gespeichert!');
                     loadSpecialWords(); // Anzeige aktualisieren
