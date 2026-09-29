@@ -37,6 +37,10 @@ struct CharGraphTimeWords {
   const char* ledDirection; // "left" or "right" (PROGMEM)
   uint8_t ledHex;           // 4-bit value (0x00-0x0F)
 
+  // Start index of each word in the pattern as matched by the validator
+  // (-1 = unknown, display falls back to its own search)
+  int16_t positions[10];
+
   // Text representation
   char text[100];           // Full text (optional, built by helper)
 };

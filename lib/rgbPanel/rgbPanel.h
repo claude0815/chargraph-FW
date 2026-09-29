@@ -38,6 +38,7 @@
   extern int findWord(const char* word, int occurrence = 0, bool searchBackward = false);
   extern int setWord(const char* word, CRGB color, int occurrence = 0, bool searchBackward = false);
   extern int setWordAuto(const char* word, int occurrence = 0, bool searchBackward = false);
+  extern void setWordAtAuto(int pos, int length);
   extern CRGB colorForLed(int ledIndex);
   extern void getLedsFromPosition(int startPos, int length, int* ledArray);
   extern void displayTime(int hours, int minutes);

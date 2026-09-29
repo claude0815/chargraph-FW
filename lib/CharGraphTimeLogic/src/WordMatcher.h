@@ -27,14 +27,16 @@
  * @param minute Minute (0-59)
  * @param outWords Output array for words (up to 10 words)
  * @param outLedInfo Output LED information
- * @return Number of words, or 0 on error
+ * @param outPositions Optional: start index of each word in the pattern
+ * @return Number of words, or 0 on error (no valid word sequence)
  */
 uint8_t getWordsForTime(
   const char* pattern,
   uint8_t hour,
   uint8_t minute,
   const char** outWords,
-  LEDInfo& outLedInfo
+  LEDInfo& outLedInfo,
+  int16_t* outPositions = nullptr
 );
 
 #endif // CHARGRAPH_WORD_MATCHER_H

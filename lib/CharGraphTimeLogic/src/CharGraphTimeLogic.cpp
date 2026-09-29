@@ -8,7 +8,7 @@
 #include "Constants.h"
 #include <cstring>
 
-#define CHARGRAPH_DEBUG true
+// CHARGRAPH_DEBUG kommt aus platformio.ini (build_flags) – hier nicht erzwingen
 
 // ============================================================================
 // PUBLIC API: GET CHARGRAPH WORDS
@@ -67,13 +67,15 @@ int8_t getCharGraphWords(
   // Get words for time
   LEDInfo ledInfo;
   const char* words[10];
+  int16_t positions[10];
 
   uint8_t wordCount = getWordsForTime(
     pattern,
     hour,
     minute,
     words,
-    ledInfo
+    ledInfo,
+    positions
   );
 
   if (wordCount == 0) {
@@ -84,6 +86,7 @@ int8_t getCharGraphWords(
   // Fill result structure
   for (uint8_t i = 0; i < wordCount; i++) {
     outResult.words[i] = words[i];
+    outResult.positions[i] = positions[i];
   }
   outResult.wordCount = wordCount;
   outResult.ledCount = ledInfo.count;

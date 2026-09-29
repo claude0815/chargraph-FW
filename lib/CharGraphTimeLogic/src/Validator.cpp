@@ -302,51 +302,91 @@ ValidationResult validateOptionalWord(
 // WORD SEQUENCE VALIDATION
 // ============================================================================
 
+// The greedy search above takes the FIRST usable occurrence of every word.
+// For the hour word (and a trailing UHR) that is wrong when the same word also
+// exists as a minute word: "ES IST FUENF UHR" would light the minute FUENF.
+// So for the tail (hour word + optional UHR) pick the LAST occurrence that
+// still keeps the sequence valid – the same choice the display made before
+// (backward search for the hour word).
+static void refineTailPositions(
+  const char* const* words,
+  uint8_t wordCount,
+  const char* gridStr,
+  int16_t* positions
+) {
+  char wordBuf[12];
+  strcpy_P(wordBuf, words[wordCount - 1]);
+  uint8_t tailStart = wordCount - 1;
+  if (strcmp(wordBuf, "UHR") == 0 && wordCount >= 2) tailStart = wordCount - 2;
+  if (tailStart < 1) return;  // never move the intro words
+
+  // Upper bound: start of the following (already refined) word
+  int16_t nextStart = -1;
+  for (int8_t i = wordCount - 1; i >= (int8_t)tailStart; i--) {
+    strcpy_P(wordBuf, words[i]);
+    uint8_t wordLen = strlen(wordBuf);
+
+    strcpy_P(wordBuf, words[i - 1]);
+    int16_t prevEnd = positions[i - 1] + (int16_t)strlen(wordBuf) - 1;
+
+    int16_t best = positions[i];
+    int16_t pos = findWord(gridStr, words[i], positions[i]);
+    while (pos != -1) {
+      int16_t end = pos + wordLen - 1;
+      if (nextStart >= 0 && end >= nextStart) break;
+      bool touchesPrev = pos == prevEnd + 1 && (pos / GRID_COLS) == (prevEnd / GRID_COLS);
+      bool touchesNext = nextStart >= 0 && end + 1 == nextStart &&
+                         (end / GRID_COLS) == (nextStart / GRID_COLS);
+      if (!touchesPrev && !touchesNext && wordFitsInLine(pos, wordLen)) best = pos;
+      pos = findWord(gridStr, words[i], pos + 1);
+    }
+    positions[i] = best;
+    nextStart = best;
+  }
+}
+
 ValidationResult validateWordSequence(
   const char* const* words,
   uint8_t wordCount,
-  const char* gridStr
+  const char* gridStr,
+  int16_t* outPositions
 ) {
-  if (!words || wordCount == 0) {
+  if (!words || wordCount == 0 || wordCount > 10) {
     return {false, ERR_NO_WORDS};
   }
 
-  // Find all words sequentially
+  // Find all words sequentially. If the next occurrence of a word touches the
+  // previous word in the same row (no dark gap) or wraps over a row end, try
+  // a later occurrence instead of failing right away – e.g. "HALB VIER" when
+  // VIERTEL directly follows HALB but a separate VIER exists further down.
   uint16_t searchStart = 0;
-  uint16_t positions[10];  // Max 10 words
-  uint16_t positionEnds[10];
+  int16_t prevEnd = -1;
 
   for (uint8_t i = 0; i < wordCount; i++) {
-    int16_t pos = findWord(gridStr, words[i], searchStart);
-
-    if (pos == -1) {
-      return {false, ERR_WORD_NOT_FOUND};
-    }
-
-    // Load word from PROGMEM to get length
     char wordBuf[12];  // Max 11 chars (DREIVIERTEL) + null terminator
     strcpy_P(wordBuf, words[i]);
     uint8_t wordLen = strlen(wordBuf);
 
-    positions[i] = pos;
-    positionEnds[i] = pos + wordLen - 1;
+    int16_t firstPos = findWord(gridStr, words[i], searchStart);
+    int16_t pos = firstPos;
+    while (pos != -1) {
+      bool touchesPrev = prevEnd >= 0 && pos == prevEnd + 1 &&
+                         (pos / GRID_COLS) == (prevEnd / GRID_COLS);
+      if (!touchesPrev && wordFitsInLine(pos, wordLen)) break;
+      pos = findWord(gridStr, words[i], pos + 1);
+    }
 
-    // Next search starts after this word
+    if (pos == -1) {
+      return {false, (firstPos == -1) ? ERR_WORD_NOT_FOUND : ERR_NO_GAP};
+    }
+
+    if (outPositions) outPositions[i] = pos;
+    prevEnd = pos + wordLen - 1;
     searchStart = pos + wordLen;
   }
 
-  // Check gaps between words
-  for (uint8_t i = 0; i < wordCount - 1; i++) {
-    const uint16_t currentEnd = positionEnds[i];
-    const uint16_t nextStart = positions[i + 1];
-
-    const uint8_t currentRow = currentEnd / GRID_COLS;
-    const uint8_t nextRow = nextStart / GRID_COLS;
-
-    // If same row, must have gap (placeholder)
-    if (currentRow == nextRow && nextStart == currentEnd + 1) {
-      return {false, ERR_NO_GAP};
-    }
+  if (outPositions) {
+    refineTailPositions(words, wordCount, gridStr, outPositions);
   }
 
   return {true, nullptr};

@@ -396,6 +396,13 @@ static uint8_t rule_46_47(const RuleContext& ctx, const char** outWords) {
     outWords[2] = ctx.hourWord;
     return 3;
   }
+  // Fallback 1: DREIVIERTEL [h] (1/2 LEDs links, wie bei :45), falls
+  // VIERTEL VOR im Pattern nicht in der richtigen Reihenfolge steht
+  if (ctx.fallbackLevel == 1 && ctx.hasDreiviertel) {
+    outWords[0] = DREIVIERTEL;
+    outWords[1] = ctx.hourWord;
+    return 2;
+  }
   // Fallback: ZEHN VOR [h]
   outWords[0] = ZEHN;
   outWords[1] = VOR;

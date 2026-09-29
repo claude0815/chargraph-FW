@@ -78,12 +78,15 @@ ValidationResult validateOptionalWord(
  * @param words Array of word pointers (PROGMEM strings)
  * @param wordCount Number of words
  * @param gridStr 110-character pattern
+ * @param outPositions Optional: receives the start index of each word as
+ *        matched by the validator (so the display can light exactly those)
  * @return ValidationResult with valid flag
  */
 ValidationResult validateWordSequence(
   const char* const* words,
   uint8_t wordCount,
-  const char* gridStr
+  const char* gridStr,
+  int16_t* outPositions = nullptr
 );
 
 #endif // CHARGRAPH_VALIDATOR_H

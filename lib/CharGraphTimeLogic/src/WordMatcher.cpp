@@ -43,7 +43,8 @@ uint8_t getWordsForTime(
   uint8_t hour,
   uint8_t minute,
   const char** outWords,
-  LEDInfo& outLedInfo
+  LEDInfo& outLedInfo,
+  int16_t* outPositions
 ) {
   if (!pattern || !outWords) {
     outLedInfo = {0, LEFT, 0x00};
@@ -100,21 +101,19 @@ uint8_t getWordsForTime(
 
   // ========== STEP 4b: SPECIAL CASE - NACHT (:00-:04 at hour 0 only) ==========
   // If NACHT is present and it's midnight (hour 0) and minute is 0-4, return only intro + NACHT (no minute words)
+  // (intro words are already in outWords[0..1])
   if (hasNacht && hour == 0 && minute <= 4) {
-    outWords[wordIdx++] = useAlternative ? WIR : ES;
-    outWords[wordIdx++] = useAlternative ? HABEN : IST;
     outWords[wordIdx++] = NACHT;
 
     // Validate NACHT sequence
-    ValidationResult nachtValidation = validateWordSequence(outWords, 3, pattern);
-    if (!nachtValidation.valid) {
-      outLedInfo = {0, LEFT, 0x00};
-      return 0;
+    ValidationResult nachtValidation = validateWordSequence(outWords, wordIdx, pattern, outPositions);
+    if (nachtValidation.valid) {
+      // Minute LEDs for :01-:04 (LEFT = minutes passed)
+      outLedInfo = calculateLEDs(outWords, wordIdx, minute);
+      return wordIdx;
     }
-
-    // Calculate LEDs (should be 0 for NACHT at :00-:04)
-    outLedInfo = calculateLEDs(outWords, 3, minute);
-    return 3;
+    // NACHT not displayable in this order -> fall through to normal rules
+    wordIdx = 2;
   }
 
   // ========== STEP 5: Apply minute rule handler ==========
@@ -132,84 +131,60 @@ uint8_t getWordsForTime(
   ctx.gridStr = pattern;
   ctx.fallbackLevel = 0;  // Initialize with 0 (primary)
 
-  const char* minuteWords[6];
-  uint8_t minuteWordCount = executeMinuteRule(minute, ctx, minuteWords);
+  // ========== STEP 6/7: Try primary rule, then fallbacks until valid ==========
+  // Order: (modifiers, fb0) -> (no modifiers, fb0) -> (modifiers, fb1) ->
+  //        (no modifiers, fb1) -> (modifiers, fb2) -> (no modifiers, fb2)
+  // Each attempt starts from the original context, so a later fallback level
+  // never re-enables modifiers that already failed. Only a validated word
+  // sequence is returned; if nothing validates, the primary result is kept
+  // (best effort, positions unknown) so the clock does not go dark.
+  bool hasModifiers = hasKurz || hasBald || hasFast;
+  const char* primaryWords[10];
+  uint8_t primaryCount = 0;
 
-  if (minuteWordCount == 0) {
+  for (uint8_t attempt = 0; attempt < 6; attempt++) {
+    bool withModifiers = (attempt % 2) == 0;
+    if (!withModifiers && !hasModifiers) continue;  // identical to previous attempt
+
+    RuleContext attemptCtx = ctx;
+    attemptCtx.fallbackLevel = attempt / 2;
+    if (!withModifiers) {
+      attemptCtx.hasKurz = false;
+      attemptCtx.hasBald = false;
+      attemptCtx.hasFast = false;
+    }
+
+    const char* minuteWords[6];
+    uint8_t minuteWordCount = executeMinuteRule(minute, attemptCtx, minuteWords);
+    if (minuteWordCount == 0) continue;
+
+    uint8_t totalWords = 2;  // intro words
+    for (uint8_t i = 0; i < minuteWordCount && totalWords < 10; i++) {
+      outWords[totalWords++] = minuteWords[i];
+    }
+
+    if (primaryCount == 0) {
+      for (uint8_t i = 0; i < totalWords; i++) primaryWords[i] = outWords[i];
+      primaryCount = totalWords;
+    }
+
+    ValidationResult validation = validateWordSequence(outWords, totalWords, pattern, outPositions);
+    if (validation.valid) {
+      // ========== STEP 8: Calculate LED info ==========
+      outLedInfo = calculateLEDs(outWords, totalWords, minute);
+      return totalWords;
+    }
+  }
+
+  if (primaryCount == 0) {
     outLedInfo = {0, LEFT, 0x00};
     return 0;
   }
 
-  // Add minute words to output
-  for (uint8_t i = 0; i < minuteWordCount; i++) {
-    outWords[wordIdx++] = minuteWords[i];
+  for (uint8_t i = 0; i < primaryCount; i++) {
+    outWords[i] = primaryWords[i];
+    if (outPositions) outPositions[i] = -1;
   }
-
-  uint8_t totalWords = wordIdx;
-
-  // ========== STEP 6: Validate word sequence ==========
-  ValidationResult validation = validateWordSequence(outWords, totalWords, pattern);
-
-  // ========== STEP 7: Multi-Level Fallback if validation fails ==========
-  if (!validation.valid) {
-    bool fallbackSuccess = false;
-
-    // Try up to 3 fallback levels
-    for (uint8_t fbLevel = 1; fbLevel <= 3 && !fallbackSuccess; fbLevel++) {
-      RuleContext ctxFallback = ctx;
-
-      // Level 1: Remove modifiers (existing logic)
-      if (fbLevel == 1 && (hasKurz || hasBald || hasFast)) {
-        ctxFallback.hasKurz = false;
-        ctxFallback.hasBald = false;
-        ctxFallback.hasFast = false;
-        ctxFallback.fallbackLevel = 0;  // Still use primary rule
-      }
-      // Level 2: Use rule's first fallback alternative
-      else if (fbLevel == 2) {
-        ctxFallback.fallbackLevel = 1;  // Signal first fallback
-      }
-      // Level 3: Use rule's second fallback (rare)
-      else if (fbLevel == 3) {
-        ctxFallback.fallbackLevel = 2;
-      }
-      else {
-        continue;  // Skip this level
-      }
-
-      // Execute minute rule with fallback context
-      const char* minuteWordsFallback[6];
-      uint8_t minuteWordCountFallback = executeMinuteRule(minute, ctxFallback, minuteWordsFallback);
-
-      if (minuteWordCountFallback > 0) {
-        // Rebuild full word list
-        wordIdx = 0;
-        if (useAlternative) {
-          outWords[wordIdx++] = WIR;
-          outWords[wordIdx++] = HABEN;
-        } else {
-          outWords[wordIdx++] = ES;
-          outWords[wordIdx++] = IST;
-        }
-
-        for (uint8_t i = 0; i < minuteWordCountFallback; i++) {
-          outWords[wordIdx++] = minuteWordsFallback[i];
-        }
-
-        totalWords = wordIdx;
-
-        // Re-validate
-        ValidationResult validationFallback = validateWordSequence(outWords, totalWords, pattern);
-        if (validationFallback.valid) {
-          validation = validationFallback;
-          fallbackSuccess = true;
-        }
-      }
-    }
-  }
-
-  // ========== STEP 8: Calculate LED info ==========
-  outLedInfo = calculateLEDs(outWords, totalWords, minute);
-
-  return totalWords;
+  outLedInfo = calculateLEDs(outWords, primaryCount, minute);
+  return primaryCount;
 }

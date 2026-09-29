@@ -54,8 +54,14 @@ void fadeOutAll(uint8_t steps = MAX_STEPS, uint16_t stepDelayMs = 15) {
   if(steps > MAX_STEPS)
     steps = MAX_STEPS;
 
-  for (uint8_t i = 0; i < MAX_STEPS; i++) {
-    fadeToBlackBy(leds, NUM_LEDS, MAX_STEPS / steps);
+  if (steps == 0)
+    steps = 1;
+  // fadeToBlackBy skaliert multiplikativ; der Faktor ist so gewaehlt, dass
+  // nach 'steps' Schritten praktisch schwarz erreicht ist (frueher liefen
+  // immer MAX_STEPS Schritte = 3 s, egal welches 'steps' uebergeben wurde).
+  uint8_t amount = (uint8_t)constrain(1600 / steps, 8, 255);
+  for (uint8_t i = 0; i < steps; i++) {
+    fadeToBlackBy(leds, NUM_LEDS, amount);
     showLEDs();
     yield();
     delay(stepDelayMs);
@@ -90,22 +96,24 @@ void fadeInCurrentFrame(uint8_t targetBrightness, uint8_t steps = MAX_STEPS, uin
 bool showSpecialWordSequence(const char words[][SPECIAL_WORD_LENGTH], CRGB color, uint8_t steps = 20, uint16_t stepDelayMs = 15)
 {
 
-  int pos = findWord(words[0], 0);
-  if (pos < 0) {
-    // Wort nicht gefunden
-    return false;
-  }
-
   // Volle Matrix zunächst aus
   FastLED.clear();
 
+  // Alle vorhandenen Woerter setzen. Frueher wurde abgebrochen, sobald das
+  // ERSTE Wort fehlte – auch wenn Wort 2/3 im Pattern standen.
+  bool anyFound = false;
   for(uint i = 0; i < MAXWORDS; i++ )
   {
-    if(findWord(words[i], 0))
+    if (words[i][0] != '\0' && findWord(words[i], 0) >= 0)
     {
       // Wort setzen
       setWord(words[i], color, 0);
+      anyFound = true;
     }
+  }
+  if (!anyFound) {
+    // Kein Wort gefunden
+    return false;
   }
 
   // Helligkeit schonend einblenden
@@ -393,6 +401,19 @@ int setWordAuto(const char* word, int occurrence, bool searchBackward)
         leds[bridgeLED(ledIndices[i])] = colorForLed(pos + i);
     }
     return pos;
+}
+
+// Wie setWordAuto, aber an einer bereits bekannten Position im charsoap
+// (z.B. vom Validator ermittelt), damit genau die validierten Buchstaben
+// leuchten und nicht ein anderes Vorkommen desselben Worts.
+void setWordAtAuto(int pos, int length)
+{
+    if (pos < 0 || length <= 0 || pos + length > (int)strlen(charsoap)) return;
+    int ledIndices[length];
+    getLedsFromPosition(pos, length, ledIndices);
+    for (int i = 0; i < length; i++) {
+        leds[bridgeLED(ledIndices[i])] = colorForLed(pos + i);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════
