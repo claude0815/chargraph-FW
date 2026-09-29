@@ -39,9 +39,8 @@
 #define ADDR_SPECIAL_B        6
 #define ADDR_CONFIGURED       7
 #define ADDR_TIMESTAMP        8
-#define ADDR_SSID             (ADDR_TIMESTAMP+sizeof(savedTime))
-#define ADDR_PASSWORD         (ADDR_SSID + AP_SSID_LENGHT)
-#define ADDR_WIFI_SET         (ADDR_PASSWORD + AP_PASSWORD_LENGTH)
+// 12-39: ehemals ADDR_SSID/ADDR_PASSWORD/ADDR_WIFI_SET (unbenutzt; die alten
+// Defines ueberlappten ADDR_LAST_SYNC und wurden deshalb entfernt)
 #define ADDR_LAST_SYNC       40
 #define ADDR_DRIFT_RATE      44
 #define ADDR_SYNC_COUNT      48
@@ -99,13 +98,22 @@
 #define ADDR_USE_RAINBOW          614    // Regenbogenfarben fuer Uhrzeit (1 byte, Magic)
 #define RAINBOW_MAGIC             0xA5
 
-#define ADDR_RTC_DRIFT_RATE       615    // RTC-Drift in s/Tag (float, 4 bytes)
-#define ADDR_RTC_DRIFT_LOCKED     619    // Drift-Rate fixiert (1 byte, Magic)
-#define ADDR_RTC_CALIB_REAL       620    // echte Zeit am Referenzpunkt (4 bytes)
-#define ADDR_RTC_CALIB_RTC        624    // RTC-Rohwert am Referenzpunkt (4 bytes)
-#define RTC_DRIFT_LOCK_MAGIC      0x5A
+// 615-627: frueheres RTC-Drift-Layout (v1), nicht mehr verwendet. Wurde auf
+// Geraeten mit frischem EEPROM (0xFF) nie gueltig initialisiert.
 
 #define ADDR_SPECIAL_BRIGHTNESS   628    // Helligkeit Sonderwoerter in % (1 byte, 0-100)
+
+// RTC-Drift-Kalibrierung v2 (629-651). Gueltig nur mit Magic-Byte, sonst Defaults.
+#define ADDR_RTCCAL_MAGIC         629    // 1 byte
+#define ADDR_RTCCAL_RATE          630    // float, Drift s/Tag
+#define ADDR_RTCCAL_LOCKED        634    // 1 byte
+#define ADDR_RTCCAL_REF_TIME      635    // uint32, UTC-Sekunde des Referenzpunkts
+#define ADDR_RTCCAL_REF_OFFSET    639    // float, RTC minus Echtzeit am Referenzpunkt
+#define ADDR_RTCCAL_REF_PRECISE   643    // 1 byte
+#define ADDR_RTCCAL_DRIFT_SUM     644    // float, aufsummierte Drift in s
+#define ADDR_RTCCAL_TIME_SUM      648    // uint32, aufsummierte Messdauer in s
+#define RTCCAL_MAGIC              0xC5
+#define RTC_DRIFT_LOCK_MAGIC      0x5A
 
 #define SPECIAL_WORD_MODE_OFF      0
 #define SPECIAL_WORD_MODE_INTERVAL 1

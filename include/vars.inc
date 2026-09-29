@@ -15,10 +15,14 @@ int syncCount = 0;
 // RTC-Drift-Kalibrierung: misst, wie stark die verbaute RTC pro Tag von der
 // echten (NTP-)Zeit abweicht, und kompensiert das beim Auslesen – auch im
 // Offline-Betrieb. rtcDriftRate > 0 = RTC geht VOR.
+bool rtcPresent = false;              // RTC beim Boot erkannt (rtc.begin() erfolgreich)
 float rtcDriftRate = 0.0;             // gemessene Drift in Sekunden/Tag
 bool rtcDriftLocked = false;          // true = Rate fixiert, keine Neumessung
-unsigned long rtcCalibRealTime = 0;   // echte (NTP-)Zeit am Referenzpunkt
-unsigned long rtcCalibRtcValue = 0;   // RTC-Rohwert am Referenzpunkt
+unsigned long rtcRefTime = 0;         // UTC-Sekunde des letzten Referenzpunkts (0 = unbekannt)
+float rtcRefOffset = 0.0;             // RTC minus Echtzeit am Referenzpunkt (Sekunden)
+bool rtcRefPrecise = false;           // Referenz per NTP ms-genau gemessen (nicht manuell)
+float rtcCalDriftSum = 0.0;           // aufsummierte gemessene Drift (Sekunden)
+unsigned long rtcCalTimeSum = 0;      // aufsummierte Messdauer (Sekunden)
 
 int8_t isConfigured = 0xFF;
 
@@ -79,7 +83,6 @@ char ntpServer[32] = "ptbtime1.ptb.de";
 unsigned long lastNtpSync = 0;
 bool ntpEnabled = false;
 bool ntpSyncSuccessful = false;
-unsigned long nextNtpCheck = 0;
 
 // ════════════════════════════════════════════════════════════════
 // AUTO-BRIGHTNESS VARIABLEN

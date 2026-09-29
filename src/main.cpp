@@ -1,6 +1,8 @@
 #include <common.inc>
 #include <Updater.h>
 #include <ca_cert.inc>
+#include <sys/time.h>
+#include <coredecls.h>   // settimeofday_cb: Benachrichtigung bei neuer SNTP-Zeit
 
 RTC_DS1307 rtc;
 
@@ -276,11 +278,12 @@ void saveSpecialWords(const char words[MAXWORDS][12]) {
 void resetSpecialWords() {
     DEBUG_PRINTLN("Setze SPECIAL_WORD auf Standard zurück...");
 
-    // Standard-Werte aus rgbPanel.cpp
+    // Standard-Werte wie in loadSpecialWords()/rgbPanel.cpp – frueher stand
+    // hier "RWD", nach dem naechsten Neustart erschien dann "DN9DAC".
     const char DEFAULT_SPECIAL_WORD[MAXWORDS][12] = {
-        "RWD",
-        "\0",
-        "\0"
+        "DN9DAC",
+        "",
+        ""
     };
 
     // Ins globale Array kopieren
@@ -426,6 +429,299 @@ bool shouldShowSpecialWord(int minutes) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// ZEITBASIS
+// ════════════════════════════════════════════════════════════════
+// Die angezeigte Zeit ist bootTime + uptimeSeconds() (UTC) abzueglich der
+// ESP-Driftkorrektur. bootTime wird bei jeder externen Zeitquelle (NTP,
+// manuelle Eingabe, RTC) ueber anchorTime() neu gesetzt.
+
+// Laufzeit seit Boot in Sekunden, ueberlauffest (millis() springt nach
+// 49,7 Tagen auf 0). ALLE Rechnungen mit bootTime muessen diese Funktion
+// statt millis()/1000 verwenden, sonst springt die Uhr nach dem Ueberlauf
+// um ca. 17 h. loop() ruft sie laufend auf, der Ueberlauf wird also sicher
+// erkannt.
+unsigned long uptimeSeconds() {
+    static unsigned long lastMillis = 0;
+    static unsigned long overflows = 0;
+    unsigned long m = millis();
+    if (m < lastMillis) overflows++;
+    lastMillis = m;
+    return overflows * 4294967UL + m / 1000;
+}
+
+// Anker der laufenden Session: wann und aus welcher Quelle bootTime zuletzt
+// gesetzt wurde. Die ESP-Driftkorrektur gilt nur ab diesem Anker – frueher
+// wurde sie ab dem im EEPROM gespeicherten lastSyncTime einer frueheren
+// Session gerechnet und damit nach jedem Neustart bzw. RTC-Abgleich
+// zusaetzlich (und teils mit falschem Vorzeichen) angewendet.
+static bool          anchorValid   = false;
+static bool          anchorPrecise = false;  // NTP oder manuelle Eingabe (nicht RTC)
+static unsigned long anchorUptime  = 0;      // uptimeSeconds() beim Anker
+static unsigned long anchorMillis  = 0;      // millis() beim Anker (fuer ms-genaue Driftmessung)
+static int64_t       anchorRealMs  = 0;      // Echtzeit (UTC, ms) beim Anker
+
+void anchorTime(unsigned long realSec, bool precise, int64_t realMs = 0) {
+    anchorUptime  = uptimeSeconds();
+    anchorMillis  = millis();
+    anchorRealMs  = realMs ? realMs : (int64_t)realSec * 1000;
+    anchorValid   = true;
+    anchorPrecise = precise;
+    bootTime      = realSec - anchorUptime;
+}
+
+// Misst beim Eintreffen einer praezisen Zeit (NTP, manuell), wie weit die
+// ESP-eigene Uhr seit dem letzten praezisen Anker abgewichen ist, und
+// mittelt das in driftRate (s/Tag, + = ESP-Uhr geht vor). Muss VOR
+// anchorTime() aufgerufen werden.
+void measureEspDrift(int64_t realMsNow, unsigned long minSpanSec) {
+    if (!anchorValid || !anchorPrecise) return;
+    int64_t realSpanMs = realMsNow - anchorRealMs;
+    if (realSpanMs < (int64_t)minSpanSec * 1000 || realSpanMs > 40LL * 86400000LL) return;
+    unsigned long espSpanMs = millis() - anchorMillis;      // wrap-sicher (< 49 Tage)
+    float driftSec = (float)((int64_t)espSpanMs - realSpanMs) / 1000.0f;
+    float sample = driftSec * 86400000.0f / (float)realSpanMs;
+    if (sample < -10.0f || sample > 10.0f) return;           // unplausibel (Quarz: wenige s/Tag)
+    int n = syncCount < 50 ? syncCount : 50;                // gleitender Mittelwert
+    driftRate = (driftRate * n + sample) / (n + 1);
+    if (syncCount < 1000) syncCount++;
+    DEBUG_PRINTF("  ESP-Drift: %.2f s/Tag (Messung %.2f)\n", driftRate, sample);
+}
+
+// ESP-Driftkorrektur seit dem Anker in Sekunden (wird von der Rohzeit abgezogen)
+static long espDriftCorrection() {
+    if (!anchorValid || driftRate == 0.0f) return 0;
+    float days = (float)(uptimeSeconds() - anchorUptime) / 86400.0f;
+    return lroundf(driftRate * days);
+}
+
+// Kleine Helfer fuer 32-Bit-Werte im EEPROM (Big Endian wie im Rest des Codes)
+static uint32_t eepromReadU32(int addr) {
+    uint32_t v = 0;
+    for (int i = 0; i < 4; i++) v = (v << 8) | EEPROM.read(addr + i);
+    return v;
+}
+static void eepromWriteU32(int addr, uint32_t v) {
+    for (int i = 0; i < 4; i++) EEPROM.write(addr + i, (v >> (24 - 8 * i)) & 0xFF);
+}
+static float eepromReadFloat(int addr) {
+    uint32_t v = eepromReadU32(addr);
+    float f;
+    memcpy(&f, &v, sizeof(f));
+    return f;
+}
+static void eepromWriteFloat(int addr, float f) {
+    uint32_t v;
+    memcpy(&v, &f, sizeof(v));
+    eepromWriteU32(addr, v);
+}
+
+// Schreibt die aktuelle Uhrzeit nach ADDR_TIMESTAMP ("letzte bekannte Zeit"
+// fuer die Stromausfall-Erkennung). Wird stuendlich aus loop() und bei jeder
+// NTP-Zeit gerufen.
+unsigned long lastTimePersistMs = 0;
+void saveLastKnownTime(bool commit = true) {
+    eepromWriteU32(ADDR_TIMESTAMP, bootTime + uptimeSeconds() - espDriftCorrection());
+    lastTimePersistMs = millis();
+    if (commit) EEPROM.commit();
+}
+
+void loadDriftRate() {
+    lastSyncTime = eepromReadU32(ADDR_LAST_SYNC);
+    driftRate = eepromReadFloat(ADDR_DRIFT_RATE);
+
+    syncCount = 0;
+    syncCount |= EEPROM.read(ADDR_SYNC_COUNT) << 8;
+    syncCount |= EEPROM.read(ADDR_SYNC_COUNT + 1);
+
+    // Frisches EEPROM liefert 0xFF... – muss ebenfalls verworfen werden
+    if (lastSyncTime < 1735689600UL || lastSyncTime > 4102444800UL) lastSyncTime = 0;
+    if (isnan(driftRate) || driftRate < -10.0 || driftRate > 10.0) driftRate = 0.0;
+    if (syncCount < 0 || syncCount > 1000) syncCount = 0;
+}
+
+void saveDriftRate(bool commit = true) {
+    eepromWriteU32(ADDR_LAST_SYNC, lastSyncTime);
+    eepromWriteFloat(ADDR_DRIFT_RATE, driftRate);
+    EEPROM.write(ADDR_SYNC_COUNT, (syncCount >> 8) & 0xFF);
+    EEPROM.write(ADDR_SYNC_COUNT + 1, syncCount & 0xFF);
+    if (commit) EEPROM.commit();
+}
+
+// ════════════════════════════════════════════════════════════════
+// RTC-DRIFT-KALIBRIERUNG
+// ════════════════════════════════════════════════════════════════
+// Bei jeder neuen NTP-Zeit wird der Versatz "RTC minus Echtzeit" auf wenige
+// Millisekunden genau gemessen (Warten auf den Sekundenwechsel der RTC). Die
+// Aenderung des Versatzes seit dem letzten praezisen Referenzpunkt ist die
+// Drift dieses Intervalls; alle Intervalle werden aufsummiert
+// (Summe Drift / Summe Zeit = Rate). Weicht die RTC um mehr als 0,5 s ab,
+// wird sie exakt auf den Sekundenwechsel nachgestellt, damit sie offline
+// moeglichst genau startet. Offline rechnet getCorrectedRTCTime() den
+// Versatz am Referenzpunkt plus Rate x Zeit seitdem heraus.
+// Bei fixierter Rate wird nur noch nachgestellt, nicht mehr gemessen.
+
+void loadRTCDrift() {
+    if (EEPROM.read(ADDR_RTCCAL_MAGIC) != RTCCAL_MAGIC) {
+        // Frisches EEPROM oder altes Layout: sauber mit Defaults starten
+        rtcDriftRate = 0.0f;
+        rtcDriftLocked = false;
+        rtcRefTime = 0;
+        rtcRefOffset = 0.0f;
+        rtcRefPrecise = false;
+        rtcCalDriftSum = 0.0f;
+        rtcCalTimeSum = 0;
+        DEBUG_PRINTLN("RTC-Drift: keine Kalibrierung gespeichert");
+        return;
+    }
+    rtcDriftRate   = eepromReadFloat(ADDR_RTCCAL_RATE);
+    rtcDriftLocked = (EEPROM.read(ADDR_RTCCAL_LOCKED) == RTC_DRIFT_LOCK_MAGIC);
+    rtcRefTime     = eepromReadU32(ADDR_RTCCAL_REF_TIME);
+    rtcRefOffset   = eepromReadFloat(ADDR_RTCCAL_REF_OFFSET);
+    rtcRefPrecise  = (EEPROM.read(ADDR_RTCCAL_REF_PRECISE) == 1);
+    rtcCalDriftSum = eepromReadFloat(ADDR_RTCCAL_DRIFT_SUM);
+    rtcCalTimeSum  = eepromReadU32(ADDR_RTCCAL_TIME_SUM);
+
+    if (isnan(rtcDriftRate) || fabsf(rtcDriftRate) > 60.0f) rtcDriftRate = 0.0f;
+    if (isnan(rtcRefOffset) || fabsf(rtcRefOffset) > 100000.0f ||
+        rtcRefTime < 1735689600UL || rtcRefTime > 4102444800UL) {
+        rtcRefTime = 0;
+        rtcRefOffset = 0.0f;
+        rtcRefPrecise = false;
+    }
+    if (isnan(rtcCalDriftSum) || rtcCalTimeSum > 3153600000UL) {
+        rtcCalDriftSum = 0.0f;
+        rtcCalTimeSum = 0;
+    }
+    DEBUG_PRINTF("RTC-Drift: %.3f s/Tag, Messdauer %lu h%s\n",
+                 rtcDriftRate, rtcCalTimeSum / 3600, rtcDriftLocked ? " (fixiert)" : "");
+}
+
+void saveRTCDrift(bool commit = true) {
+    EEPROM.write(ADDR_RTCCAL_MAGIC, RTCCAL_MAGIC);
+    eepromWriteFloat(ADDR_RTCCAL_RATE, rtcDriftRate);
+    EEPROM.write(ADDR_RTCCAL_LOCKED, rtcDriftLocked ? RTC_DRIFT_LOCK_MAGIC : 0);
+    eepromWriteU32(ADDR_RTCCAL_REF_TIME, rtcRefTime);
+    eepromWriteFloat(ADDR_RTCCAL_REF_OFFSET, rtcRefOffset);
+    EEPROM.write(ADDR_RTCCAL_REF_PRECISE, rtcRefPrecise ? 1 : 0);
+    eepromWriteFloat(ADDR_RTCCAL_DRIFT_SUM, rtcCalDriftSum);
+    eepromWriteU32(ADDR_RTCCAL_TIME_SUM, rtcCalTimeSum);
+    if (commit) EEPROM.commit();
+}
+
+// Liest die RTC und rechnet Versatz + Drift seit dem Referenzpunkt heraus.
+// Liefert 0, wenn keine RTC vorhanden ist oder sie steht.
+unsigned long getCorrectedRTCTime() {
+    if (!rtcPresent || !rtc.isrunning()) return 0;
+    unsigned long raw = rtc.now().unixtime();
+    if (rtcRefTime == 0) return raw;
+    float days = (raw > rtcRefTime) ? (float)(raw - rtcRefTime) / 86400.0f : 0.0f;
+    long corr = lroundf(rtcRefOffset + rtcDriftRate * days);
+    return (unsigned long)((int64_t)raw - corr);
+}
+
+// Misst "RTC minus Echtzeit" in Sekunden auf wenige ms genau: wartet auf den
+// naechsten Sekundenwechsel der RTC und vergleicht ihn mit der NTP-gestuetzten
+// Systemzeit. Die RTC liefert nur ganze Sekunden – ohne diesen Trick waere
+// jede Messung um bis zu +-1 s verrauscht (bei 1 h Messdauer +-24 s/Tag).
+// Blockiert max. ~1,2 s.
+bool measureRtcOffset(float &offsetSec) {
+    if (!rtcPresent || !rtc.isrunning()) return false;
+    uint32_t sec0 = rtc.now().unixtime();
+    uint32_t t0 = millis();
+    while (millis() - t0 < 1200) {
+        uint32_t sec1 = rtc.now().unixtime();
+        if (sec1 != sec0) {
+            struct timeval tv;
+            gettimeofday(&tv, nullptr);
+            double real = (double)tv.tv_sec + tv.tv_usec / 1e6;
+            offsetSec = (float)((double)sec1 - real);
+            return true;
+        }
+        yield();
+    }
+    return false;
+}
+
+// Stellt die RTC exakt auf die Systemzeit: wartet auf den naechsten vollen
+// Sekundenwechsel und schreibt dann (der DS1307 setzt beim Schreiben des
+// Sekundenregisters seinen Teiler zurueck). Blockiert max. ~1 s.
+void setRtcPrecise() {
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    time_t target = tv.tv_sec + 1;
+    uint32_t t0 = millis();
+    while (tv.tv_sec < target && millis() - t0 < 1500) {
+        yield();
+        gettimeofday(&tv, nullptr);
+    }
+    rtc.adjust(DateTime((uint32_t)tv.tv_sec));
+}
+
+// Bei jeder neuen NTP-Zeit aufgerufen (nicht bei manueller Eingabe – die ist
+// fuer eine Driftmessung zu ungenau). Speichert nicht selbst – der Aufrufer
+// schreibt alle Werte gemeinsam mit einem einzigen EEPROM.commit().
+void updateRTCDriftCalibration() {
+    if (!rtcPresent) return;
+
+    struct timeval tv;
+    float off;
+    if (!measureRtcOffset(off)) {
+        // RTC steht (z.B. Batterie leer) -> neu stellen, Versatz noch unbekannt
+        setRtcPrecise();
+        gettimeofday(&tv, nullptr);
+        rtcRefTime = tv.tv_sec;
+        rtcRefOffset = 0.0f;
+        rtcRefPrecise = false;
+        DEBUG_PRINTLN("RTC-Drift: RTC lief nicht - neu gestellt");
+        return;
+    }
+    gettimeofday(&tv, nullptr);
+    unsigned long now = tv.tv_sec;
+
+    bool refUsable = rtcRefPrecise && rtcRefTime > 0 && now > rtcRefTime;
+    if (refUsable && now - rtcRefTime < 1800) return;  // Intervall noch zu kurz
+
+    if (refUsable && !rtcDriftLocked) {
+        unsigned long span = now - rtcRefTime;
+        float drift = off - rtcRefOffset;
+        float sample = drift * 86400.0f / (float)span;
+        if (fabsf(sample) <= 60.0f) {
+            rtcCalDriftSum += drift;
+            rtcCalTimeSum  += span;
+            rtcDriftRate = rtcCalDriftSum * 86400.0f / (float)rtcCalTimeSum;
+            DEBUG_PRINTF("RTC-Drift: %+.3f s in %.1f h -> %.3f s/Tag (Messdauer %lu h)\n",
+                         drift, span / 3600.0f, rtcDriftRate, rtcCalTimeSum / 3600);
+        } else {
+            DEBUG_PRINTF("RTC-Drift: Messung verworfen (%.1f s/Tag unplausibel)\n", sample);
+        }
+    }
+
+    // Neuer Referenzpunkt. Bei mehr als 0,5 s Abweichung die RTC exakt
+    // nachstellen und den Restversatz gleich nochmal messen.
+    if (fabsf(off) > 0.5f) {
+        setRtcPrecise();
+        if (!measureRtcOffset(off)) off = 0.0f;
+        gettimeofday(&tv, nullptr);
+        now = tv.tv_sec;
+    }
+    rtcRefTime = now;
+    rtcRefOffset = off;
+    rtcRefPrecise = true;
+}
+
+// Manuelle Zeiteingabe: RTC stellen. Die Referenz gilt als ungenau
+// (Browserzeit, Netzlaufzeit) und wird fuer die Driftmessung nicht genutzt –
+// die naechste NTP-Zeit setzt wieder eine praezise Referenz.
+void rtcSetManually(unsigned long utcSec) {
+    if (!rtcPresent) return;
+    rtc.adjust(DateTime((uint32_t)utcSec));
+    rtcRefTime = utcSec;
+    rtcRefOffset = 0.0f;
+    rtcRefPrecise = false;
+    saveRTCDrift();
+}
+
+// ════════════════════════════════════════════════════════════════
 // EEPROM / PERSISTENZ
 // ════════════════════════════════════════════════════════════════
 void loadConfig() {
@@ -507,160 +803,13 @@ void saveConfig() {
     EEPROM.write(ADDR_SPECIAL_BRIGHTNESS, specialBrightness);
     EEPROM.write(ADDR_CONFIGURED, MAGIC_BYTE_INIT);
 
-    // WICHTIG: aktuelle Uhrzeit speichern, NICHT bootTime roh.
-    // bootTime = Unix-Zeit zu millis()=0 dieser Session, die echte aktuelle
-    // Zeit ist bootTime + millis()/1000. Wird in detectPowerLossWithRTC()
-    // als "letzte bekannte Zeit" gelesen.
-    unsigned long nowSec = bootTime + (millis() / 1000);
-    EEPROM.write(ADDR_TIMESTAMP, (nowSec >> 24) & 0xFF);
-    EEPROM.write(ADDR_TIMESTAMP + 1, (nowSec >> 16) & 0xFF);
-    EEPROM.write(ADDR_TIMESTAMP + 2, (nowSec >> 8) & 0xFF);
-    EEPROM.write(ADDR_TIMESTAMP + 3, nowSec & 0xFF);
+    // Aktuelle Uhrzeit (nicht bootTime roh) als "letzte bekannte Zeit" fuer
+    // detectPowerLossWithRTC() ablegen – committet wird gemeinsam unten.
+    saveLastKnownTime(false);
 
     EEPROM.commit();
 }
 
-// Schreibt nur die aktuelle Uhrzeit nach ADDR_TIMESTAMP – wird periodisch
-// (alle 60 min) aus loop() und nach jedem NTP-Sync gerufen, damit
-// detectPowerLossWithRTC beim naechsten Boot den Stromausfall-Zeitraum
-// korrekt rechnen kann (sonst stuende dort nur die Zeit vom letzten
-// manuellen Speichern).
-void saveLastKnownTime() {
-    unsigned long nowSec = bootTime + (millis() / 1000);
-    EEPROM.write(ADDR_TIMESTAMP, (nowSec >> 24) & 0xFF);
-    EEPROM.write(ADDR_TIMESTAMP + 1, (nowSec >> 16) & 0xFF);
-    EEPROM.write(ADDR_TIMESTAMP + 2, (nowSec >> 8) & 0xFF);
-    EEPROM.write(ADDR_TIMESTAMP + 3, nowSec & 0xFF);
-    EEPROM.commit();
-}
-
-void loadDriftRate() {
-    lastSyncTime = 0;
-    lastSyncTime |= ((unsigned long)EEPROM.read(ADDR_LAST_SYNC)) << 24;
-    lastSyncTime |= ((unsigned long)EEPROM.read(ADDR_LAST_SYNC + 1)) << 16;
-    lastSyncTime |= ((unsigned long)EEPROM.read(ADDR_LAST_SYNC + 2)) << 8;
-    lastSyncTime |= EEPROM.read(ADDR_LAST_SYNC + 3);
-    
-    byte driftBytes[4];
-    for (int i = 0; i < 4; i++) {
-        driftBytes[i] = EEPROM.read(ADDR_DRIFT_RATE + i);
-    }
-    driftRate = *((float*)driftBytes);
-    
-    syncCount = 0;
-    syncCount |= EEPROM.read(ADDR_SYNC_COUNT) << 8;
-    syncCount |= EEPROM.read(ADDR_SYNC_COUNT + 1);
-    
-    if (lastSyncTime < 1735689600) lastSyncTime = 0;
-    if (isnan(driftRate) || driftRate < -10.0 || driftRate > 10.0) driftRate = 0.0;
-    if (syncCount < 0 || syncCount > 1000) syncCount = 0;
-}
-
-void saveDriftRate() {
-    EEPROM.write(ADDR_LAST_SYNC, (lastSyncTime >> 24) & 0xFF);
-    EEPROM.write(ADDR_LAST_SYNC + 1, (lastSyncTime >> 16) & 0xFF);
-    EEPROM.write(ADDR_LAST_SYNC + 2, (lastSyncTime >> 8) & 0xFF);
-    EEPROM.write(ADDR_LAST_SYNC + 3, lastSyncTime & 0xFF);
-    
-    byte* driftBytes = (byte*)&driftRate;
-    for (int i = 0; i < 4; i++) {
-        EEPROM.write(ADDR_DRIFT_RATE + i, driftBytes[i]);
-    }
-    
-    EEPROM.write(ADDR_SYNC_COUNT, (syncCount >> 8) & 0xFF);
-    EEPROM.write(ADDR_SYNC_COUNT + 1, syncCount & 0xFF);
-    
-    EEPROM.commit();
-}
-
-void loadRTCDrift() {
-    byte b[4];
-    for (int i = 0; i < 4; i++) b[i] = EEPROM.read(ADDR_RTC_DRIFT_RATE + i);
-    rtcDriftRate = *((float*)b);
-
-    rtcDriftLocked = (EEPROM.read(ADDR_RTC_DRIFT_LOCKED) == RTC_DRIFT_LOCK_MAGIC);
-
-    rtcCalibRealTime = 0;
-    rtcCalibRealTime |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_REAL)) << 24;
-    rtcCalibRealTime |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_REAL + 1)) << 16;
-    rtcCalibRealTime |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_REAL + 2)) << 8;
-    rtcCalibRealTime |= EEPROM.read(ADDR_RTC_CALIB_REAL + 3);
-
-    rtcCalibRtcValue = 0;
-    rtcCalibRtcValue |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_RTC)) << 24;
-    rtcCalibRtcValue |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_RTC + 1)) << 16;
-    rtcCalibRtcValue |= ((unsigned long)EEPROM.read(ADDR_RTC_CALIB_RTC + 2)) << 8;
-    rtcCalibRtcValue |= EEPROM.read(ADDR_RTC_CALIB_RTC + 3);
-
-    // Plausibilitaet: Drift max. +/-60 s/Tag, Referenzzeiten erst ab 2025
-    if (isnan(rtcDriftRate) || rtcDriftRate < -60.0 || rtcDriftRate > 60.0) rtcDriftRate = 0.0;
-    if (rtcCalibRealTime < 1735689600) { rtcCalibRealTime = 0; rtcCalibRtcValue = 0; }
-}
-
-void saveRTCDrift() {
-    byte* b = (byte*)&rtcDriftRate;
-    for (int i = 0; i < 4; i++) EEPROM.write(ADDR_RTC_DRIFT_RATE + i, b[i]);
-
-    EEPROM.write(ADDR_RTC_DRIFT_LOCKED, rtcDriftLocked ? RTC_DRIFT_LOCK_MAGIC : 0);
-
-    EEPROM.write(ADDR_RTC_CALIB_REAL,     (rtcCalibRealTime >> 24) & 0xFF);
-    EEPROM.write(ADDR_RTC_CALIB_REAL + 1, (rtcCalibRealTime >> 16) & 0xFF);
-    EEPROM.write(ADDR_RTC_CALIB_REAL + 2, (rtcCalibRealTime >> 8) & 0xFF);
-    EEPROM.write(ADDR_RTC_CALIB_REAL + 3, rtcCalibRealTime & 0xFF);
-
-    EEPROM.write(ADDR_RTC_CALIB_RTC,     (rtcCalibRtcValue >> 24) & 0xFF);
-    EEPROM.write(ADDR_RTC_CALIB_RTC + 1, (rtcCalibRtcValue >> 16) & 0xFF);
-    EEPROM.write(ADDR_RTC_CALIB_RTC + 2, (rtcCalibRtcValue >> 8) & 0xFF);
-    EEPROM.write(ADDR_RTC_CALIB_RTC + 3, rtcCalibRtcValue & 0xFF);
-
-    EEPROM.commit();
-}
-
-// Liest die RTC und rechnet die akkumulierte Drift seit dem Referenzpunkt
-// heraus. Ohne gueltige Kalibrierung wird der Rohwert zurueckgegeben.
-unsigned long getCorrectedRTCTime() {
-    if (!rtc.begin() || !rtc.isrunning()) return 0;
-    unsigned long raw = rtc.now().unixtime();
-    if (rtcDriftRate != 0.0 && rtcCalibRtcValue > 0 && raw > rtcCalibRtcValue) {
-        float daysSince = (float)(raw - rtcCalibRtcValue) / 86400.0;
-        long correction = (long)(rtcDriftRate * daysSince);
-        return raw - correction;
-    }
-    return raw;
-}
-
-// Bei jedem erfolgreichen NTP-Sync aufgerufen. Setzt beim ersten Mal den
-// Referenzpunkt, danach wird die Drift-Rate aus der vergangenen Periode
-// neu berechnet (je laenger, desto genauer). Bei rtcDriftLocked bleibt die
-// Rate unveraendert.
-void updateRTCDriftCalibration(unsigned long ntpRealTime) {
-    if (!rtc.begin() || !rtc.isrunning()) return;
-    unsigned long raw = rtc.now().unixtime();
-
-    if (rtcCalibRealTime == 0 || rtcCalibRtcValue == 0) {
-        rtcCalibRealTime = ntpRealTime;
-        rtcCalibRtcValue = raw;
-        saveRTCDrift();
-        DEBUG_PRINTLN("✓ RTC-Drift: Referenzpunkt gesetzt");
-        return;
-    }
-
-    if (rtcDriftLocked) return;
-
-    long realElapsed = (long)ntpRealTime - (long)rtcCalibRealTime;
-    if (realElapsed < 3600) return;  // mind. 1h fuer eine sinnvolle Messung
-
-    long rtcElapsed = (long)raw - (long)rtcCalibRtcValue;
-    long driftSec   = rtcElapsed - realElapsed;  // + = RTC zu schnell
-    float newRate   = (float)driftSec * 86400.0 / (float)realElapsed;
-
-    if (newRate < -60.0 || newRate > 60.0) return;  // unplausibel, ignorieren
-
-    rtcDriftRate = newRate;
-    saveRTCDrift();
-    DEBUG_PRINTF("✓ RTC-Drift gemessen: %.2f s/Tag (Periode %ld h)\n",
-                 rtcDriftRate, realElapsed / 3600);
-}
 
 // ════════════════════════════════════════════════════════════════
 // OTA VERSION MANAGEMENT
@@ -671,6 +820,8 @@ void saveOTAVersion() {
         if (firmwareVersion[i] == '\0') break;
     }
 
+    // Build-Datum hat 20 Bytes INKLUSIVE Nullterminator – frueher landete
+    // die '\0' auf ADDR_OTA_FLAGS (218) und loeschte das OTA-Erfolgs-Flag.
     const char* buildDate = BUILD_DATE;
     const char* buildTime = BUILD_TIME;
     int idx = 0;
@@ -678,7 +829,7 @@ void saveOTAVersion() {
         EEPROM.write(ADDR_OTA_BUILD_DATE + idx, buildDate[i]);
     }
     EEPROM.write(ADDR_OTA_BUILD_DATE + idx++, ' ');
-    for (uint8_t i = 0; i < strlen(buildTime) && idx < 20; i++, idx++) {
+    for (uint8_t i = 0; i < strlen(buildTime) && idx < 19; i++, idx++) {
         EEPROM.write(ADDR_OTA_BUILD_DATE + idx, buildTime[i]);
     }
     EEPROM.write(ADDR_OTA_BUILD_DATE + idx, '\0');
@@ -689,15 +840,23 @@ void saveOTAVersion() {
 
 void loadOTAVersion() {
     for (int i = 0; i < 32; i++) {
-        firmwareVersion[i] = EEPROM.read(ADDR_OTA_VERSION + i);
-        if (firmwareVersion[i] == '\0' || firmwareVersion[i] == 0xFF) {
+        uint8_t c = EEPROM.read(ADDR_OTA_VERSION + i);
+        if (c == 0 || c == 0xFF) {
             firmwareVersion[i] = '\0';
             break;
         }
+        firmwareVersion[i] = (char)c;
     }
+    firmwareVersion[sizeof(firmwareVersion) - 1] = '\0';
 
-    if (firmwareVersion[0] == '\0' || firmwareVersion[0] == 0xFF) {
-        generateVersion(firmwareVersion, sizeof(firmwareVersion));
+    // Version aus dem Build ableiten und bei Abweichung (z.B. nach einem
+    // OTA-Update) aktualisieren – frueher blieb die erste je installierte
+    // Version fuer immer im EEPROM stehen.
+    char current[sizeof(firmwareVersion)];
+    generateVersion(current, sizeof(current));
+    if (strcmp(firmwareVersion, current) != 0) {
+        strncpy(firmwareVersion, current, sizeof(firmwareVersion) - 1);
+        firmwareVersion[sizeof(firmwareVersion) - 1] = '\0';
         saveOTAVersion();
     }
 
@@ -906,7 +1065,7 @@ void loadNTPConfig() {
     DEBUG_PRINTF("  Letzter Sync: %lu\n", lastNtpSync);
 }
 
-void saveNTPConfig() {
+void saveNTPConfig(bool commit = true) {
     EEPROM.write(ADDR_NTP_ENABLED, ntpEnabled ? NTP_ENABLED_MAGIC : 0);
 
     // NTP Server speichern
@@ -921,8 +1080,7 @@ void saveNTPConfig() {
     EEPROM.write(ADDR_NTP_LAST_SYNC + 2, (lastNtpSync >> 8) & 0xFF);
     EEPROM.write(ADDR_NTP_LAST_SYNC + 3, lastNtpSync & 0xFF);
 
-    EEPROM.commit();
-    DEBUG_PRINTLN("✓ NTP Config gespeichert");
+    if (commit) EEPROM.commit();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -948,7 +1106,11 @@ void loadAutoBrightnessConfig() {
     autoBrightnessMin = EEPROM.read(ADDR_AUTO_BRIGHTNESS_MIN);
     autoBrightnessMax = EEPROM.read(ADDR_AUTO_BRIGHTNESS_MAX);
 
-    // Validierung
+    // Validierung (frisches EEPROM liefert 0xFFFF)
+    if (autoBrightnessMinADC > 1003) autoBrightnessMinADC = 200;
+    if (autoBrightnessMaxADC > 1023 || autoBrightnessMaxADC <= autoBrightnessMinADC) {
+        autoBrightnessMaxADC = (autoBrightnessMinADC < 820) ? 820 : autoBrightnessMinADC + 20;
+    }
     if (autoBrightnessMin > 80) autoBrightnessMin = 0;
     if (autoBrightnessMax > 80 || autoBrightnessMax == 0) autoBrightnessMax = 80;
     if (autoBrightnessMin > autoBrightnessMax) autoBrightnessMin = 0;
@@ -997,6 +1159,7 @@ int setHour(int hour, CRGB color) {
         case 12: return setWord("ZWoLF" , color, 0, true);
         case 13: return setWord("EIN"   , color, 0, true);
     }
+    return -1;  // ungueltige Stunde (frueher: kein return -> undefiniertes Verhalten)
 }
 
 String getHourName(int hour)
@@ -1050,8 +1213,14 @@ void displayTime(int hours, int minutes)
       // Wort aus PROGMEM in Buffer kopieren
       strcpy_P(wordBuf, (PGM_P)result.words[i]);
       
+      // Bevorzugt exakt das Vorkommen malen, das der Validator geprueft hat
+      // (sonst kann z.B. ein anderes "ACHT"/"ZEHN" im Pattern leuchten).
+      if (result.positions[i] >= 0)
+      {
+        setWordAtAuto(result.positions[i], strlen(wordBuf));
+      }
       // Hervorhebung für Stundenwort (letztes vor UHR)
-      if (i == (result.wordCount - 1 - hasUhr))
+      else if (i == (result.wordCount - 1 - hasUhr))
       {
         setWordAuto(wordBuf, 0, true);
       }
@@ -1178,6 +1347,7 @@ void showOTAProgress(int progress, bool isError = false, bool isSuccess = false)
             ledIndex = row * COLS + (COLS - 1 - col);
         }
 
+        if (ledIndex == 2) continue;  // LED 2 = Fotowiderstand, bleibt immer aus
         leds[bridgeLED(ledIndex)] = color;
     }
 
@@ -1211,41 +1381,35 @@ void otaProgressCallback(size_t current, size_t total) {
 // ════════════════════════════════════════════════════════════════
 // FUNKTIONEN: ZEIT
 // ════════════════════════════════════════════════════════════════
-void getCurrentTime(int &hours, int &minutes, int &seconds) {
-    static unsigned long lastMillis = 0;
-    static unsigned long millisOverflows = 0;
-    static unsigned long lastRTCSync = 0;
-    
-    unsigned long currentMillis = millis();
-    
-    if (currentMillis < lastMillis) {
-        millisOverflows++;
-        DEBUG_PRINTLN("⚠ millis() Overflow!");
-    }
-    lastMillis = currentMillis;
-    
-    unsigned long totalSeconds = (millisOverflows * 4294967UL) + (currentMillis / 1000);
-    unsigned long currentSeconds = bootTime + totalSeconds;
-    
-    if (currentMillis - lastRTCSync > 86400000 || lastRTCSync > currentMillis) {
-        if (rtc.begin() && rtc.isrunning()) {
-            unsigned long rtcTime = getCorrectedRTCTime();  // driftkompensiert
-            long drift = currentSeconds - rtcTime;
-            
-            if (abs(drift) > 30) {
-                bootTime = rtcTime - totalSeconds;
-                currentSeconds = rtcTime;
-                DEBUG_PRINTF("RTC-Sync: %ld Sek\n", drift);
+// Aktuelle Zeit in UTC (Sekunden): bootTime + Laufzeit minus ESP-Drift.
+// Ohne frische NTP-Zeit wird stuendlich auf die driftkorrigierte RTC
+// nachgezogen (frueher nur alle 24 h und erst ab 30 s Abweichung).
+unsigned long nowUtc() {
+    unsigned long up = uptimeSeconds();
+    unsigned long cur = bootTime + up - espDriftCorrection();
+
+    static unsigned long lastRtcCheckUp = 0;
+    if (rtcPresent && up - lastRtcCheckUp >= 3600) {
+        lastRtcCheckUp = up;
+        bool ntpFresh = ntpSyncSuccessful && lastNtpSync > 0 &&
+                        cur >= lastNtpSync && cur - lastNtpSync < 7200;
+        if (!ntpFresh) {
+            unsigned long rtcTime = getCorrectedRTCTime();
+            if (rtcTime > 1735689600UL) {
+                long diff = (long)(cur - rtcTime);
+                if (labs(diff) >= 2) {
+                    DEBUG_PRINTF("RTC-Abgleich: %ld s\n", diff);
+                    anchorTime(rtcTime, false);
+                    cur = rtcTime;
+                }
             }
         }
-        lastRTCSync = currentMillis;
     }
-    
-    if (driftRate != 0.0 && lastSyncTime > 0) {
-        float daysSinceSync = (currentSeconds - lastSyncTime) / 86400.0;
-        long estimatedDrift = (long)(driftRate * daysSinceSync);
-        currentSeconds -= estimatedDrift;
-    }
+    return cur;
+}
+
+void getCurrentTime(int &hours, int &minutes, int &seconds) {
+    unsigned long currentSeconds = nowUtc();
 
     // ════════════════════════════════════════════════════════════════
     // ZEITZONE: UTC → MEZ/MESZ (Deutschland)
@@ -1269,9 +1433,52 @@ void getCurrentTime(int &hours, int &minutes, int &seconds) {
     hours = (currentSeconds / 3600) % 24;
 }
 
+// Zeichnet die aktuelle Zeit sofort neu (nach Einstellungsaenderungen) und
+// beruecksichtigt dabei den Sonderwort-Modus – ein nacktes displayTime()
+// wuerde im Parallel-Modus die Sonderwoerter bis zur naechsten Minute loeschen.
+void renderCurrentTime() {
+    if (powerLossDetected) return;
+    int hours, minutes, seconds;
+    getCurrentTime(hours, minutes, seconds);
+    if (specialWordMode == SPECIAL_WORD_MODE_PARALLEL) {
+        displayTimeWithSpecial(hours, minutes);
+    } else {
+        displayTime(hours, minutes);
+    }
+    lastDisplayedMinute = minutes;
+    lastUpdateTime = millis();
+}
+
 // ════════════════════════════════════════════════════════════════
 // WEBSERVER HANDLER
 // ════════════════════════════════════════════════════════════════
+// Maskiert einen String fuer die Ausgabe in JSON. SSIDs (auch fremde aus dem
+// Scan), Identities, Hostnamen und Sonderwoerter koennen " oder \ enthalten –
+// unmaskiert bricht JSON.parse im Browser und die ganze Seite/Liste faellt aus.
+String jsonEscape(const String& in) {
+    String out;
+    out.reserve(in.length() + 8);
+    for (size_t i = 0; i < in.length(); i++) {
+        char c = in[i];
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if ((uint8_t)c < 0x20) {
+                    char buf[7];
+                    snprintf(buf, sizeof(buf), "\\u%04x", (uint8_t)c);
+                    out += buf;
+                } else {
+                    out += c;
+                }
+        }
+    }
+    return out;
+}
+
 void handleRoot() {
     DEBUG_PRINTLN("→ handleRoot aufgerufen");
 
@@ -1279,7 +1486,7 @@ void handleRoot() {
     server.sendHeader("Content-Encoding", "gzip");
     server.send_P(200, "text/html", (const char*)HTML_PAGE_GZIP, HTML_PAGE_GZIP_LEN);
 
-    DEBUG_PRINTF("  HTML gesendet: %d Bytes (komprimiert)\n", HTML_PAGE_GZIP_LEN);
+    DEBUG_PRINTF("  HTML gesendet: %u Bytes (komprimiert)\n", (unsigned)HTML_PAGE_GZIP_LEN);
 }
 
 void handleGetColors() {
@@ -1302,8 +1509,8 @@ void handleGetTime() {
     int h, m, s;
     getCurrentTime(h, m, s);
 
-    // UTC-Zeit berechnen
-    unsigned long currentSecondsUTC = bootTime + (millis() / 1000);
+    // UTC-Zeit berechnen (identisch zur Anzeige inkl. Driftkorrektur)
+    unsigned long currentSecondsUTC = nowUtc();
 
     // Zeitzonenkorrektur: UTC → MEZ/MESZ (wie in getCurrentTime)
     time_t utcTime = currentSecondsUTC;
@@ -1323,18 +1530,13 @@ void handleGetTime() {
     json += "\"lastSync\":" + String(lastSyncTime) + ",";
     json += "\"driftRate\":" + String(driftRate, 3) + ",";
     json += "\"syncCount\":" + String(syncCount) + ",";
-    json += "\"uptime\":" + String(millis() / 1000) + ",";
+    json += "\"uptime\":" + String(uptimeSeconds()) + ",";
     json += "\"powerLoss\":" + String(powerLossDetected ? "true" : "false") + ",";
-    json += "\"rtcDriftRate\":" + String(rtcDriftRate, 2) + ",";
+    json += "\"rtcPresent\":" + String(rtcPresent ? "true" : "false") + ",";
+    json += "\"rtcDriftRate\":" + String(rtcDriftRate, 3) + ",";
     json += "\"rtcDriftLocked\":" + String(rtcDriftLocked ? "true" : "false") + ",";
-    {
-        // Dauer der laufenden Messung in Stunden (0 = noch kein Referenzpunkt)
-        unsigned long elapsedH = 0;
-        if (rtcCalibRealTime > 0 && lastSyncTime > rtcCalibRealTime) {
-            elapsedH = (lastSyncTime - rtcCalibRealTime) / 3600UL;
-        }
-        json += "\"rtcCalibHours\":" + String(elapsedH);
-    }
+    // Aufsummierte Messdauer der Drift-Kalibrierung in Stunden
+    json += "\"rtcCalibHours\":" + String(rtcCalTimeSum / 3600.0f, 1);
     json += "}";
 
     server.send(200, "application/json", json);
@@ -1350,10 +1552,12 @@ void handleRTCDriftLock() {
 }
 
 void handleRTCDriftReset() {
-    rtcDriftRate = 0.0;
+    // Messung neu beginnen. Den Referenzpunkt (letzter bekannter Versatz)
+    // behalten – der ist weiterhin gueltig und wird fuer die Korrektur gebraucht.
+    rtcDriftRate = 0.0f;
     rtcDriftLocked = false;
-    rtcCalibRealTime = 0;
-    rtcCalibRtcValue = 0;
+    rtcCalDriftSum = 0.0f;
+    rtcCalTimeSum = 0;
     saveRTCDrift();
     server.send(200, "text/plain", "OK - RTC-Drift zurueckgesetzt");
 }
@@ -1369,6 +1573,30 @@ void handlePowerLossClear() {
 // ════════════════════════════════════════════════════════════════
 // PATTERN TEST HANDLER
 // ════════════════════════════════════════════════════════════════
+// Kritische Test-Zeiten: Zeiten mit Wortueberlappungen (EIN/EINS, VIER in
+// VIERTEL, FUENF/ZEHN doppelt).
+static const int PATTERN_TEST_TIMES[][2] = {
+    // Stunde 0 und 1 KOMPLETT (EIN vs EINS, mit/ohne UHR)
+    {0, 0}, {0, 5}, {0, 10}, {0, 15}, {0, 20}, {0, 25}, {0, 30}, {0, 35}, {0, 40}, {0, 45}, {0, 50}, {0, 55},
+    {1, 0}, {1, 5}, {1, 10}, {1, 15}, {1, 20}, {1, 25}, {1, 30}, {1, 35}, {1, 40}, {1, 45}, {1, 50}, {1, 55},
+    // Beispiel weitere Stunden
+    {12, 0}, {12, 25},  // ZWÖLF und HALB EINS
+    // VIER als Stunde (weil "VIER" auch in VIERTEL steckt)
+    {3, 45},  // VIERTEL VOR VIER
+    {4, 0}, {4, 5}, {4, 10}, {4, 15}, {4, 20}, {4, 25}, {4, 30}, {4, 35}, {4, 40}, {4, 45}, {4, 50}, {4, 55},
+    // FÜNF als Stunde (weil "FuNF" zweimal vorkommt)
+    {5, 0}, {5, 5}, {5, 10}, {5, 15}, {5, 20}, {5, 25}, {5, 30}, {5, 35}, {5, 40}, {5, 45}, {5, 50}, {5, 55},
+    // ZEHN als Stunde (weil "ZEHN" zweimal vorkommt)
+    {9, 50},  // ZEHN VOR ZEHN
+    {10, 0}, {10, 5}, {10, 10}, {10, 15}, {10, 20}, {10, 25}, {10, 30}, {10, 35}, {10, 40}, {10, 45}, {10, 50}, {10, 55}
+};
+static const int PATTERN_TEST_COUNT = sizeof(PATTERN_TEST_TIMES) / sizeof(PATTERN_TEST_TIMES[0]);
+static int patternTestIndex = 0;
+static unsigned long patternTestNextMs = 0;
+
+// Startet den Pattern-Test. Der eigentliche Ablauf passiert schrittweise in
+// runPatternTestStep() aus loop() – frueher blockierte der Handler ~2 min
+// und rief den Webserver rekursiv auf, was Requests durcheinanderbringen kann.
 void handlePatternTest() {
     DEBUG_PRINTLN("→ handlePatternTest aufgerufen");
 
@@ -1378,58 +1606,26 @@ void handlePatternTest() {
     }
 
     server.send(200, "text/plain", "Pattern-Test gestartet - Nur kritische Zeiten werden getestet");
-
     patternTestRunning = true;
+    patternTestIndex = 0;
+    patternTestNextMs = millis();
+}
 
-    // Kritische Test-Zeiten: Nur Zeiten mit Wortüberlappungen
-    const int testTimes[][2] = {
-        // Stunde 0 und 1 KOMPLETT (EIN vs EINS, mit/ohne UHR)
-        {0, 0}, {0, 5}, {0, 10}, {0, 15}, {0, 20}, {0, 25}, {0, 30}, {0, 35}, {0, 40}, {0, 45}, {0, 50}, {0, 55},
-        {1, 0}, {1, 5}, {1, 10}, {1, 15}, {1, 20}, {1, 25}, {1, 30}, {1, 35}, {1, 40}, {1, 45}, {1, 50}, {1, 55},
+void runPatternTestStep() {
+    if (!patternTestRunning || (long)(millis() - patternTestNextMs) < 0) return;
 
-        // Beispiel weitere Stunden
-        {12, 0}, {12, 25},  // ZWÖLF und HALB EINS
-
-        // VIER als Stunde (weil "VIER" zweimal vorkommt: in VIERTEL + separat)
-        {3, 45},  // VIERTEL VOR VIER
-        {4, 0},   // VIER UHR
-        {4, 5}, {4, 10}, {4, 15}, {4, 20}, {4, 25}, {4, 30}, {4, 35}, {4, 40}, {4, 45}, {4, 50}, {4, 55},
-
-        // FÜNF als Stunde (weil "FuNF" zweimal vorkommt: separat + in ZWoLFuNF)
-        {4, 55},  // FÜNF VOR FÜNF
-        {5, 0},   // FÜNF UHR
-        {5, 5}, {5, 10}, {5, 15}, {5, 20}, {5, 25}, {5, 30}, {5, 35}, {5, 40}, {5, 45}, {5, 50}, {5, 55},
-
-        // ZEHN als Stunde (weil "ZEHN" zweimal vorkommt: oben + unten)
-        {9, 50},  // ZEHN VOR ZEHN
-        {10, 0},  // ZEHN UHR
-        {10, 5}, {10, 10}, {10, 15}, {10, 20}, {10, 25}, {10, 30}, {10, 35}, {10, 40}, {10, 45}, {10, 50}, {10, 55}
-    };
-
-    const int numTests = sizeof(testTimes) / sizeof(testTimes[0]);
-
-    for (int i = 0; i < numTests && patternTestRunning; i++) {
-        int h = testTimes[i][0];
-        int m = testTimes[i][1];
-
-        DEBUG_PRINTF("Pattern-Test: %02d:%02d (%d/%d)\n", h, m, i+1, numTests);
-        displayTime(h, m);
-
-        // 2 Sekunden warten, dabei WiFi am Leben halten
-        for (int j = 0; j < 20 && patternTestRunning; j++) {
-            yield();
-            server.handleClient();
-            delay(100);
-        }
+    if (patternTestIndex >= PATTERN_TEST_COUNT) {
+        patternTestRunning = false;
+        DEBUG_PRINTLN("✓ Pattern-Test abgeschlossen");
+        renderCurrentTime();  // zurueck zur aktuellen Zeit
+        return;
     }
-
-    patternTestRunning = false;
-    DEBUG_PRINTLN("✓ Pattern-Test abgeschlossen");
-
-    // Zurück zur aktuellen Zeit
-    int h, m, s;
-    getCurrentTime(h, m, s);
+    int h = PATTERN_TEST_TIMES[patternTestIndex][0];
+    int m = PATTERN_TEST_TIMES[patternTestIndex][1];
+    DEBUG_PRINTF("Pattern-Test: %02d:%02d (%d/%d)\n", h, m, patternTestIndex + 1, PATTERN_TEST_COUNT);
     displayTime(h, m);
+    patternTestIndex++;
+    patternTestNextMs = millis() + 2000;
 }
 
 void handleGetCharsoap() {
@@ -1452,7 +1648,7 @@ void handleGetSpecialWords() {
     String json = "{\"words\":[";
     for (int i = 0; i < MAXWORDS; i++) {
         json += "\"";
-        json += SPECIAL_WORD[i];
+        json += jsonEscape(String(SPECIAL_WORD[i]));
         json += "\"";
         if (i < MAXWORDS - 1) json += ",";
     }
@@ -1558,86 +1754,76 @@ void handleSave() {
     DEBUG_PRINTLN("→ handleSave aufgerufen");
     if (server.hasArg("timestamp")) {
         DEBUG_PRINT("handleSave");
-        unsigned long utcTimestamp = server.arg("timestamp").toInt();
-        int timezoneOffset = server.hasArg("tzoffset") ? server.arg("tzoffset").toInt() : 0;
+        unsigned long utcTimestamp = strtoul(server.arg("timestamp").c_str(), nullptr, 10);
+        long timezoneOffset = server.hasArg("tzoffset") ? server.arg("tzoffset").toInt() : 0;
         unsigned long clientTime = utcTimestamp - timezoneOffset;
+
+        // Charsoap vorab pruefen, damit ein ungueltiges Pattern nicht still
+        // mit "OK" quittiert wird.
+        if (server.hasArg("charsoap") && server.arg("charsoap").length() > 0 &&
+            server.arg("charsoap").length() != CHARSOAP_LEN) {
+            server.send(400, "text/plain", "Wortmatrix muss genau " + String(CHARSOAP_LEN) +
+                        " Zeichen haben (erhalten: " + String(server.arg("charsoap").length()) + ")");
+            return;
+        }
 
         // timestamp=0 bedeutet "Zeit nicht aendern" – wird vom Frontend bei
         // saveColors() / saveCharsoap() gesendet, um Drift-Berechnung, bootTime
         // und RTC nicht zu zerschiessen.
         if (utcTimestamp != 0) {
-            if (lastSyncTime > 0 && bootTime > 0) {
-                unsigned long espTime = bootTime + (millis() / 1000);
-                unsigned long timeSinceSync = clientTime - lastSyncTime;
-
-                if (timeSinceSync > 3600) {
-                    long drift = espTime - clientTime;
-                    float daysElapsed = timeSinceSync / 86400.0;
-                    float newDriftRate = drift / daysElapsed;
-
-                    if (syncCount > 0) {
-                        driftRate = (driftRate * syncCount + newDriftRate) / (syncCount + 1);
-                    } else {
-                        driftRate = newDriftRate;
-                    }
-
-                    syncCount++;
-                    saveDriftRate();
-                }
+            if (clientTime < 1735689600UL) {
+                server.send(400, "text/plain", "Ungueltige Zeit");
+                return;
             }
-
-            bootTime = clientTime - (millis() / 1000);
+            // ESP-Drift seit dem letzten praezisen Anker dieser Session messen
+            // (Browserzeit ist auf ~1 s genau -> mind. 12 h Abstand verlangen)
+            measureEspDrift((int64_t)clientTime * 1000, 12UL * 3600);
+            anchorTime(clientTime, true);
             lastSyncTime = clientTime;
-
-            if (rtc.begin()) {
-                DateTime newTime(clientTime);
-                rtc.adjust(newTime);
-            }
+            saveDriftRate();
+            rtcSetManually(clientTime);
         }
-        
-        normalColor.r = server.arg("nr").toInt();
-        normalColor.g = server.arg("ng").toInt();
-        normalColor.b = server.arg("nb").toInt();
+
+        // Farben/Helligkeit nur uebernehmen, wenn sie mitgeschickt wurden –
+        // sonst wuerden fehlende Parameter als 0 (schwarz / dunkel) gespeichert.
+        if (server.hasArg("nr") && server.hasArg("ng") && server.hasArg("nb")) {
+            normalColor.r = server.arg("nr").toInt();
+            normalColor.g = server.arg("ng").toInt();
+            normalColor.b = server.arg("nb").toInt();
+        }
         if (server.hasArg("rainbow")) {
             useRainbow = (server.arg("rainbow") == "1" || server.arg("rainbow") == "true");
         }
-        
-        specialColor.r = server.arg("sr").toInt();
-        specialColor.g = server.arg("sg").toInt();
-        specialColor.b = server.arg("sb").toInt();
+        if (server.hasArg("sr") && server.hasArg("sg") && server.hasArg("sb")) {
+            specialColor.r = server.arg("sr").toInt();
+            specialColor.g = server.arg("sg").toInt();
+            specialColor.b = server.arg("sb").toInt();
+        }
         if (server.hasArg("specialBrightness")) {
             int sb = server.arg("specialBrightness").toInt();
             if (sb < 0) sb = 0;
             if (sb > 100) sb = 100;
             specialBrightness = (uint8_t)sb;
         }
+        if (server.hasArg("brightness")) {
+            int b = server.arg("brightness").toInt();
+            brightness = (uint8_t)constrain(b, 10, 80);
+        }
 
-        brightness = server.arg("brightness").toInt();
-
-        if (server.hasArg("charsoap")) {
-            String newCharsoap = server.arg("charsoap");
+        if (server.hasArg("charsoap") && server.arg("charsoap").length() == CHARSOAP_LEN) {
             // Achtung: nicht .toUpperCase() – Umlaute werden vom Frontend bereits
             // in Kleinbuchstaben (a/o/u) umgewandelt; ein zweites Uppercasen wuerde
             // diese Information verlieren.
-            if (newCharsoap.length() == CHARSOAP_LEN) {
-                saveCharsoap(newCharsoap.c_str());
-            } else if (newCharsoap.length() > 0) {
-                DEBUG_PRINTF("❌ handleSave: charsoap Laenge %u (erwartet %u)\n",
-                             newCharsoap.length(), (unsigned)CHARSOAP_LEN);
-            }
+            saveCharsoap(server.arg("charsoap").c_str());
         }
 
         saveConfig();
-        // User-Helligkeit (0-80) auf LED-Helligkeit (0-204) mappen
-        DEBUG_PRINTF("Brightness: %d",(int) map(brightness, 0, 80, 0, 204));
+        // User-Helligkeit (0-80) auf LED-Helligkeit (0-204) mappen. Bei aktiver
+        // Auto-Helligkeit uebernimmt updateBrightness() gleich wieder.
         FastLED.setBrightness(map(brightness, 0, 80, 0, 204));
-        
-        server.send(200, "text/plain", "OK");
-        int hours, minutes, seconds;
-        getCurrentTime(hours, minutes, seconds);
 
-        displayTime(hours, minutes);
-        lastUpdateTime = millis();
+        server.send(200, "text/plain", "OK");
+        renderCurrentTime();
     } else {
         server.send(400, "text/plain", "Fehler");
     }
@@ -1670,12 +1856,19 @@ void handleLEDTest() {
     uint8_t r = server.hasArg("r") ? server.arg("r").toInt() : 255;
     uint8_t g = server.hasArg("g") ? server.arg("g").toInt() : 255;
     uint8_t b = server.hasArg("b") ? server.arg("b").toInt() : 255;
-    uint8_t testBrightness = server.hasArg("brightness") ? server.arg("brightness").toInt() : 80;
-    
+    int testBrightness = server.hasArg("brightness") ? server.arg("brightness").toInt() : 80;
+    testBrightness = constrain(testBrightness, 0, 204);  // 80 %-Obergrenze wie im Normalbetrieb
+
     CRGB color = CRGB(r, g, b);
-    
-    // Aktuelle Helligkeit sichern und Test-Helligkeit setzen
-    uint8_t savedBrightness = brightness;
+
+    // Aktuelle LED-Helligkeit sichern (0-255-Skala – frueher wurde der
+    // 0-80-User-Wert "zurueckgesetzt", die Uhr lief danach mit ~30 %) und bei
+    // JEDEM Verlassen der Funktion wiederherstellen, auch bei Fehlern.
+    struct BrightnessGuard {
+        uint8_t saved;
+        BrightnessGuard() : saved(FastLED.getBrightness()) {}
+        ~BrightnessGuard() { FastLED.setBrightness(saved); }
+    } brightnessGuard;
     FastLED.setBrightness(testBrightness);
     
     FastLED.clear();
@@ -1824,14 +2017,26 @@ void handleLEDTest() {
     else {
         server.send(400, "text/plain", "Fehler: Unbekannter Modus");
     }
-    
-    // Helligkeit zurücksetzen
-    FastLED.setBrightness(savedBrightness);
+    // Helligkeit wird durch brightnessGuard wiederhergestellt
 }
 
 // ════════════════════════════════════════════════════════════════
 // OTA UPDATE HANDLER
 // ════════════════════════════════════════════════════════════════
+// Verzoegerter Neustart: erst die HTTP-Antwort rausschicken, dann aus loop()
+// neu starten (frueher startete das ESP im Upload-Handler neu, der Browser
+// bekam keine Antwort und meldete "Netzwerkfehler" trotz Erfolg).
+static unsigned long restartAtMs = 0;
+void scheduleRestart(unsigned long delayMs) {
+    restartAtMs = millis() + delayMs;
+    if (restartAtMs == 0) restartAtMs = 1;
+}
+void handlePendingRestart() {
+    if (restartAtMs != 0 && (long)(millis() - restartAtMs) >= 0) {
+        ESP.restart();
+    }
+}
+
 void handleOTAInfo() {
     DEBUG_PRINTLN("→ handleOTAInfo aufgerufen");
 
@@ -1870,6 +2075,7 @@ void handleOTAUpload() {
         }
     }
     else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (otaError.length() > 0) return;  // Begin/Write bereits fehlgeschlagen
         if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
             Update.printError(Serial);
             otaError = "Write failed";
@@ -1882,33 +2088,43 @@ void handleOTAUpload() {
         }
     }
     else if (upload.status == UPLOAD_FILE_END) {
-        if (Update.end(true)) {
+        if (otaError.length() == 0 && Update.end(true)) {
             DEBUG_PRINTF("OTA Success: %u bytes\n", upload.totalSize);
             showOTAProgress(100, false, true);
 
             EEPROM.write(ADDR_OTA_FLAGS, OTA_FLAG_UPDATE_SUCCESS);
+            saveLastKnownTime(false);
             EEPROM.commit();
 
             otaInProgress = false;
-
-            delay(3000);
-            ESP.restart();
+            // Neustart erst NACH der Antwort (handleOTAUploadDone -> loop())
         } else {
-            Update.printError(Serial);
-            otaError = String(Update.getError());
+            if (otaError.length() == 0) {
+                Update.printError(Serial);
+                otaError = String(Update.getError());
+            }
             showOTAProgress(100, true, false);
             otaInProgress = false;
         }
+    }
+    else if (upload.status == UPLOAD_FILE_ABORTED) {
+        // Browser hat den Upload abgebrochen – Update verwerfen, sonst bliebe
+        // otaInProgress bis zum Neustart haengen.
+        Update.end(false);
+        otaError = "Upload abgebrochen";
+        showOTAProgress(100, true, false);
+        otaInProgress = false;
     }
 }
 
 void handleOTAUploadDone() {
     if (otaError.length() > 0) {
-        String json = "{\"success\":false,\"message\":\"" + otaError + "\"}";
+        String json = "{\"success\":false,\"message\":\"" + jsonEscape(otaError) + "\"}";
         server.send(500, "application/json", json);
     } else {
-        String json = "{\"success\":true,\"message\":\"Update erfolgreich\"}";
+        String json = "{\"success\":true,\"message\":\"Update erfolgreich - Neustart\"}";
         server.send(200, "application/json", json);
+        scheduleRestart(3000);
     }
 }
 
@@ -1949,6 +2165,9 @@ void handleOTAFromURL() {
     });
 
     ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
+    // Selbst neu starten, damit vorher das OTA-Flag geschrieben wird – sonst
+    // startet die Bibliothek sofort neu und der Neustart gilt als Stromausfall.
+    ESPhttpUpdate.rebootOnUpdate(false);
 
     WiFiClient client;
     t_httpUpdate_return ret = ESPhttpUpdate.update(client, firmwareURL);
@@ -1975,10 +2194,11 @@ void handleOTAFromURL() {
             showOTAProgress(100, false, true);
 
             EEPROM.write(ADDR_OTA_FLAGS, OTA_FLAG_UPDATE_SUCCESS);
+            saveLastKnownTime(false);
             EEPROM.commit();
 
-            delay(3000);
-            ESP.restart();
+            otaInProgress = false;
+            scheduleRestart(3000);
             break;
     }
 }
@@ -1989,7 +2209,7 @@ void handleOTAStatus() {
     String json = "{";
     json += "\"inProgress\":" + String(otaInProgress ? "true" : "false") + ",";
     json += "\"progress\":" + String(otaProgress) + ",";
-    json += "\"error\":\"" + otaError + "\",";
+    json += "\"error\":\"" + jsonEscape(otaError) + "\",";
     json += "\"elapsed\":" + String(millis() - otaStartTime);
     json += "}";
 
@@ -2006,7 +2226,7 @@ void handleGetWiFiConfig() {
 
     // WiFi Station Config
     json += "\"staEnabled\":" + String(staEnabled ? "true" : "false") + ",";
-    json += "\"staSsid\":\"" + String(staSsid) + "\",";
+    json += "\"staSsid\":\"" + jsonEscape(String(staSsid)) + "\",";
     // Passwort niemals im Klartext ausliefern: Frontend bekommt nur einen Marker,
     // dass eines gespeichert ist. Beim /wifi/save wird ein leeres Feld als
     // "bestehendes Passwort beibehalten" interpretiert (staPasswordKeep=1).
@@ -2015,9 +2235,9 @@ void handleGetWiFiConfig() {
     // WPA2-Enterprise (PEAP/MS-CHAPv2): Identity wird gespeichert und ausgeliefert,
     // sie ist nicht geheim (wird auf Funk-Ebene ohnehin sichtbar uebertragen).
     json += "\"staEnterprise\":" + String(staEnterprise ? "true" : "false") + ",";
-    json += "\"staIdentity\":\"" + String(staIdentity) + "\",";
-    json += "\"staAnonIdentity\":\"" + String(staAnonIdentity) + "\",";
-    json += "\"staHostname\":\"" + String(staHostname) + "\",";
+    json += "\"staIdentity\":\"" + jsonEscape(String(staIdentity)) + "\",";
+    json += "\"staAnonIdentity\":\"" + jsonEscape(String(staAnonIdentity)) + "\",";
+    json += "\"staHostname\":\"" + jsonEscape(String(staHostname)) + "\",";
     json += "\"staDhcp\":" + String(staDhcp ? "true" : "false") + ",";
     json += "\"staIP\":\"" + staIP.toString() + "\",";
     json += "\"staGateway\":\"" + staGateway.toString() + "\",";
@@ -2031,7 +2251,7 @@ void handleGetWiFiConfig() {
 
     // NTP Config
     json += "\"ntpEnabled\":" + String(ntpEnabled ? "true" : "false") + ",";
-    json += "\"ntpServer\":\"" + String(ntpServer) + "\",";
+    json += "\"ntpServer\":\"" + jsonEscape(String(ntpServer)) + "\",";
     json += "\"ntpLastSync\":" + String(lastNtpSync) + ",";
     json += "\"ntpSyncOk\":" + String(ntpSyncSuccessful ? "true" : "false");
 
@@ -2151,8 +2371,11 @@ void handleRestart() {
 
     server.send(200, "text/plain", "Neustart wird durchgeführt...");
 
-    delay(500);  // Kurze Pause, damit Response gesendet wird
-    ESP.restart();
+    // Gewollter Neustart ist kein Stromausfall: Zeit sichern und Running-Flag
+    // loeschen (clearRunningFlag() wurde bisher nirgends aufgerufen).
+    saveLastKnownTime(false);
+    clearRunningFlag();
+    scheduleRestart(500);  // Neustart aus loop(), nachdem die Antwort raus ist
 }
 
 void handleWiFiScan() {
@@ -2175,7 +2398,7 @@ void handleWiFiScan() {
         if (i > 0) json += ",";
 
         json += "{";
-        json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
+        json += "\"ssid\":\"" + jsonEscape(WiFi.SSID(i)) + "\",";
         json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
         json += "\"encryption\":" + String(WiFi.encryptionType(i));
         json += "}";
@@ -2229,8 +2452,10 @@ void handleSaveAutoBrightness() {
 
     // Min ADC Wert
     if (server.hasArg("minADC")) {
-        uint16_t newMinADC = server.arg("minADC").toInt();
-        if (newMinADC >= 0 && newMinADC <= 1023) {
+        int newMinADC = server.arg("minADC").toInt();
+        // max. 1003, damit Max-ADC noch mindestens 20 darueber liegen kann
+        // (bei Min == Max teilt map() durch 0)
+        if (newMinADC >= 0 && newMinADC <= 1003) {
             autoBrightnessMinADC = newMinADC;
             // Auto-Korrektur: Max muss größer sein
             if (autoBrightnessMaxADC <= autoBrightnessMinADC) {
@@ -2242,8 +2467,8 @@ void handleSaveAutoBrightness() {
 
     // Max ADC Wert
     if (server.hasArg("maxADC")) {
-        uint16_t newMaxADC = server.arg("maxADC").toInt();
-        if (newMaxADC >= 0 && newMaxADC <= 1023 && newMaxADC > autoBrightnessMinADC) {
+        int newMaxADC = server.arg("maxADC").toInt();
+        if (newMaxADC >= 0 && newMaxADC <= 1023 && newMaxADC > (int)autoBrightnessMinADC) {
             autoBrightnessMaxADC = newMaxADC;
             changed = true;
         }
@@ -2251,7 +2476,7 @@ void handleSaveAutoBrightness() {
 
     // Min Helligkeit
     if (server.hasArg("minBrightness")) {
-        uint8_t newMinBrightness = server.arg("minBrightness").toInt();
+        int newMinBrightness = server.arg("minBrightness").toInt();
         if (newMinBrightness >= 0 && newMinBrightness <= 80) {
             autoBrightnessMin = newMinBrightness;
             // Auto-Korrektur: Max muss größer sein
@@ -2264,7 +2489,7 @@ void handleSaveAutoBrightness() {
 
     // Max Helligkeit
     if (server.hasArg("maxBrightness")) {
-        uint8_t newMaxBrightness = server.arg("maxBrightness").toInt();
+        int newMaxBrightness = server.arg("maxBrightness").toInt();
         // Max darf nicht > 80 sein
         if (newMaxBrightness >= 0 && newMaxBrightness <= 80) {
             autoBrightnessMax = newMaxBrightness;
@@ -2278,6 +2503,11 @@ void handleSaveAutoBrightness() {
 
     if (changed) {
         saveAutoBrightnessConfig();
+        if (!autoBrightnessEnabled) {
+            // Beim Abschalten sonst bliebe der letzte Auto-Wert stehen
+            FastLED.setBrightness(map(brightness, 0, 80, 0, 204));
+            showLEDs();
+        }
         server.send(200, "text/plain", "OK - Auto-Brightness konfiguriert!");
         DEBUG_PRINTLN("Auto-Brightness Config gespeichert");
     } else {
@@ -2298,15 +2528,12 @@ void handleNotFound() {
 // STROMAUSFALL-ERKENNUNG MIT RTC
 // ════════════════════════════════════════════════════════════════
 bool detectPowerLossWithRTC() {
-    DateTime rtcNow = rtc.now();
-    unsigned long rtcTime = rtcNow.unixtime();
-    
+    // Driftkorrigierte RTC-Zeit – sonst liefe die Uhr nach einem Neustart
+    // ohne WLAN bis zum naechsten RTC-Abgleich mit der unkorrigierten Zeit.
+    unsigned long rtcTime = getCorrectedRTCTime();
+
     // Hole letzte gespeicherte Zeit aus EEPROM
-    unsigned long lastKnownTime = 0;
-    lastKnownTime |= ((unsigned long)EEPROM.read(ADDR_TIMESTAMP)) << 24;
-    lastKnownTime |= ((unsigned long)EEPROM.read(ADDR_TIMESTAMP + 1)) << 16;
-    lastKnownTime |= ((unsigned long)EEPROM.read(ADDR_TIMESTAMP + 2)) << 8;
-    lastKnownTime |= EEPROM.read(ADDR_TIMESTAMP + 3);
+    unsigned long lastKnownTime = eepromReadU32(ADDR_TIMESTAMP);
     
     Serial.println("\n╔════════════════════════════════════════╗");
     Serial.println(  "║    STROMAUSFALL-PRÜFUNG (RTC)          ║");
@@ -2315,13 +2542,13 @@ bool detectPowerLossWithRTC() {
     Serial.printf("RTC-Zeit:             %lu\n", rtcTime);
     Serial.printf("Letzte bekannte Zeit: %lu\n", lastKnownTime);
     
-    // Prüfe ob gültige Zeit gespeichert ist
-    if (lastKnownTime < 1735689600) {  // Vor 2025-01-01
+    // Prüfe ob gültige Zeit gespeichert ist (0xFFFFFFFF = frisches EEPROM)
+    if (lastKnownTime < 1735689600UL || lastKnownTime > 4102444800UL) {
         Serial.println("→ Keine gültige Zeit gespeichert");
         Serial.println("✓ Erste Inbetriebnahme\n");
-        
+
         // Übernehme RTC-Zeit als Startpunkt
-        bootTime = rtcTime;
+        anchorTime(rtcTime, false);
         return false;
     }
     
@@ -2346,7 +2573,7 @@ bool detectPowerLossWithRTC() {
         Serial.println("════════════════════════════════════════\n");
         
         // Übernehme RTC-Zeit
-        bootTime = rtcTime;
+        anchorTime(rtcTime, false);
         return true;
     }
     
@@ -2355,7 +2582,7 @@ bool detectPowerLossWithRTC() {
     Serial.println("✓ Kein Stromausfall\n");
     
     // Übernehme RTC-Zeit als Basis
-    bootTime = rtcTime;
+    anchorTime(rtcTime, false);
     return false;
 }
 
@@ -2477,11 +2704,7 @@ bool detectPowerLoss() {
         return false;  // KEIN Stromausfall!
     }
 
-    bool rtcAvailable = rtc.begin() && rtc.isrunning();
-    #if (defined(USE_RTC) && USE_RTC == false)
-        #warning "RTC not in use!"
-        rtcAvailable = false;
-    #endif
+    bool rtcAvailable = rtcPresent && rtc.isrunning();
 
     if (rtcAvailable)
     {
@@ -2562,11 +2785,10 @@ static const char* wifiDisconnectReasonName(uint8_t r) {
     }
 }
 
-void setupWiFiStation() {
-    if (!staEnabled || strlen(staSsid) == 0) {
-        DEBUG_PRINTLN("→ WiFi Station deaktiviert (keine Credentials)");
-        return;
-    }
+// Konfiguriert die Station (Hostname, IP, Enterprise) und startet den
+// Verbindungsaufbau – nicht blockierend. Wird beim Boot und fuer spaetere
+// Wiederholungsversuche aus checkWiFiConnection() genutzt.
+void beginStation() {
 
     DEBUG_PRINTLN("\n╔════════════════════════════════════════╗");
     DEBUG_PRINTLN(  "║   WIFI STATION VERBINDUNG              ║");
@@ -2678,6 +2900,14 @@ void setupWiFiStation() {
     } else {
         WiFi.begin(staSsid, staPassword);
     }
+}
+
+void setupWiFiStation() {
+    if (!staEnabled || strlen(staSsid) == 0) {
+        DEBUG_PRINTLN("→ WiFi Station deaktiviert (keine Credentials)");
+        return;
+    }
+    beginStation();
 
     // Warte max. 10 Sekunden auf Verbindung
     DEBUG_PRINT("Verbinde");
@@ -2699,20 +2929,28 @@ void setupWiFiStation() {
         DEBUG_PRINTLN("⚠ Verbindung fehlgeschlagen (Timeout)");
         DEBUG_PRINTF("  Status: %d\n", WiFi.status());
 
-        // WICHTIG: Auto-Reconnect deaktivieren, um AP-Funktionalität nicht zu beeinträchtigen
+        // Dauerndes Auto-Reconnect wuerde den AP (gleiches Funkmodul) stoeren,
+        // solange jemand ueber den AP konfiguriert. Stattdessen versucht
+        // checkWiFiConnection() es alle 2 min erneut, sobald kein Geraet am
+        // AP haengt (z.B. Router nach Stromausfall noch nicht bereit).
         WiFi.setAutoReconnect(false);
         WiFi.disconnect();
 
         // AP-Mode sicherstellen
         WiFi.mode(WIFI_AP_STA);  // Dual-Mode beibehalten
-        DEBUG_PRINTLN("→ Auto-Reconnect deaktiviert, AP-Mode bleibt aktiv");
-        DEBUG_PRINTLN("→ Verbinden Sie sich mit dem AP für neue WiFi-Einstellungen");
+        DEBUG_PRINTLN("→ Neuer Verbindungsversuch in 2 min, AP bleibt vorerst aktiv");
     }
 }
 
 // ════════════════════════════════════════════════════════════════
 // NTP SETUP & SYNC
 // ════════════════════════════════════════════════════════════════
+// Wird aus dem SNTP-Stack gerufen, sobald eine neue NTP-Zeit gesetzt wurde
+// (standardmaessig einmal pro Stunde). Nur Flag setzen – die Auswertung
+// passiert in checkNTPSync() im normalen loop()-Kontext.
+static volatile bool sntpTimeReceived = false;
+static void onSntpTimeSet() { sntpTimeReceived = true; }
+
 void setupNTP()
 {
     if (!ntpEnabled || WiFi.status() != WL_CONNECTED)
@@ -2728,115 +2966,57 @@ void setupNTP()
     DEBUG_PRINTLN(  "╚════════════════════════════════════════╝");
     DEBUG_PRINTF("NTP Server: %s\n", ntpServer);
 
-    // Konfiguriere NTP (UTC speichern, Zeitzone wird beim Anzeigen umgerechnet)
-    // Syntax: configTime(timezone_sec, daylight_sec, server1, server2, server3)
+    static bool callbackRegistered = false;
+    if (!callbackRegistered) {
+        settimeofday_cb(onSntpTimeSet);
+        callbackRegistered = true;
+    }
+
+    // Konfiguriere NTP (UTC speichern, Zeitzone wird beim Anzeigen umgerechnet).
+    // Nicht blockierend: die Zeit wird uebernommen, sobald das erste Paket
+    // eintrifft (Callback -> checkNTPSync()).
     configTime(0, 0, ntpServer, "pool.ntp.org", "time.nist.gov");
+    DEBUG_PRINTLN("ℹ NTP gestartet – Zeit wird mit dem ersten Paket uebernommen");
+}
 
-    DEBUG_PRINTLN("ℹ Zeitzone: UTC (Umrechnung auf MEZ/MESZ erfolgt automatisch)");
+// Uebernimmt eine frisch per SNTP gesetzte Systemzeit: ESP-Drift messen,
+// Zeitanker setzen, RTC vermessen/nachstellen, alles mit EINEM
+// EEPROM.commit() speichern (jedes commit loescht einen Flash-Sektor).
+void onNtpTimeReceived() {
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    if (tv.tv_sec < 1735689600) return;  // noch keine gueltige Zeit
+    int64_t realMs = (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
 
-    DEBUG_PRINTLN("Warte auf NTP-Sync...");
+    measureEspDrift(realMs, 3000);
+    anchorTime(tv.tv_sec, true, realMs);
+    lastNtpSync = tv.tv_sec;
+    lastSyncTime = tv.tv_sec;
+    ntpSyncSuccessful = true;
 
-    // Warte max. 5 Sekunden auf ersten Sync
-    time_t now = time(nullptr);
-    int timeout = 0;
-    while (now < 1000000000 && timeout < 10) {  // Timestamp > ~2001
-        delay(500);
-        now = time(nullptr);
-        DEBUG_PRINT(".");
-        timeout++;
-    }
-    DEBUG_PRINTLN();
+    updateRTCDriftCalibration();  // blockiert ggf. bis ~3 s
 
-    if (now > 1000000000) {
-        DEBUG_PRINTLN("✓ NTP-Sync erfolgreich!");
-        DEBUG_PRINTF("  Unix-Zeit: %lld\n", (long long)now);
-
-        struct tm* timeinfo = localtime(&now);
-        DEBUG_PRINTF("  Datum: %04d-%02d-%02d %02d:%02d:%02d\n",
-                    timeinfo->tm_year + 1900,
-                    timeinfo->tm_mon + 1,
-                    timeinfo->tm_mday,
-                    timeinfo->tm_hour,
-                    timeinfo->tm_min,
-                    timeinfo->tm_sec);
-
-        // Übernehme NTP-Zeit als bootTime
-        bootTime = now - (millis() / 1000);
-        lastNtpSync = now;
-        lastSyncTime = now;  // WICHTIG: Für Drift-Korrektur
-        ntpSyncSuccessful = true;
-        updateRTCDriftCalibration(now);  // RTC-Drift messen/kalibrieren
-        saveLastKnownTime();             // damit Power-Loss-Schwelle richtig rechnet
-        saveNTPConfig();  // Speichere letzten Sync
-        saveDriftRate();  // Speichere auch lastSyncTime
-
-        // Nächster Check in 1 Stunde
-        nextNtpCheck = millis() + 3600000;
-    } else {
-        DEBUG_PRINTLN("⚠ NTP-Sync fehlgeschlagen (Timeout)");
-        ntpSyncSuccessful = false;
-        // Retry in 5 Minuten
-        nextNtpCheck = millis() + 300000;
-    }
+    saveLastKnownTime(false);
+    saveNTPConfig(false);
+    saveDriftRate(false);
+    saveRTCDrift(false);
+    EEPROM.commit();
+    DEBUG_PRINTF("✓ NTP-Zeit uebernommen: %lu\n", (unsigned long)tv.tv_sec);
 }
 
 void checkNTPSync() {
-    // Nur wenn NTP aktiviert und WiFi verbunden
-    if (!ntpEnabled || WiFi.status() != WL_CONNECTED) {
-        return;
+    if (sntpTimeReceived) {
+        sntpTimeReceived = false;
+        if (ntpEnabled) onNtpTimeReceived();
     }
-
-    // Nur wenn Check-Zeit erreicht
-    if (millis() < nextNtpCheck) {
-        return;
-    }
-
-    DEBUG_PRINTLN("→ Stündlicher NTP-Sync...");
-
-    time_t now = time(nullptr);
-    if (now > 1000000000) {
-        // Sync erfolgreich
-        unsigned long oldBootTime = bootTime;
-        bootTime = now - (millis() / 1000);
-
-        // Berechne Drift seit letztem Sync
-        if (lastNtpSync > 0) {
-            long drift = (long)bootTime - (long)oldBootTime;
-            DEBUG_PRINTF("  Drift seit letztem Sync: %ld Sekunden\n", drift);
-
-            // Aktualisiere Drift-Rate (nutze bestehendes System!)
-            unsigned long timeSinceSync = now - lastNtpSync;
-            if (timeSinceSync > 3600) {  // Min. 1 Stunde
-                float daysElapsed = timeSinceSync / 86400.0;
-                float newDriftRate = drift / daysElapsed;
-
-                if (syncCount > 0) {
-                    driftRate = (driftRate * syncCount + newDriftRate) / (syncCount + 1);
-                } else {
-                    driftRate = newDriftRate;
-                }
-
-                syncCount++;
-                saveDriftRate();
-            }
+    // Laenger als 2 h keine NTP-Zeit mehr -> nicht mehr als synchron werten
+    if (ntpSyncSuccessful && lastNtpSync > 0) {
+        unsigned long now = nowUtc();
+        if (now > lastNtpSync && now - lastNtpSync > 7200) {
+            ntpSyncSuccessful = false;
+            DEBUG_PRINTLN("⚠ Seit 2 h keine NTP-Zeit erhalten");
         }
-
-        lastNtpSync = now;
-        lastSyncTime = now;  // WICHTIG: Für Drift-Korrektur
-        ntpSyncSuccessful = true;
-        updateRTCDriftCalibration(now);  // RTC-Drift messen/kalibrieren
-        saveLastKnownTime();             // damit Power-Loss-Schwelle richtig rechnet
-        saveNTPConfig();
-        saveDriftRate();  // Speichere auch lastSyncTime
-
-        DEBUG_PRINTLN("  ✓ NTP-Sync erfolgreich");
-    } else {
-        DEBUG_PRINTLN("  ⚠ NTP-Sync fehlgeschlagen");
-        ntpSyncSuccessful = false;
     }
-
-    // Nächster Check in 1 Stunde (oder 5 Min bei Fehler)
-    nextNtpCheck = millis() + (ntpSyncSuccessful ? 3600000 : 300000);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2879,7 +3059,57 @@ void checkWiFiConnection() {
             setupNTP();
         }
     }
+
+    // Nicht verbunden: regelmaessig neu versuchen – aber nicht, solange ein
+    // Geraet am AP haengt (der Verbindungsversuch stoert das gemeinsame
+    // Funkmodul und damit die laufende Konfiguration).
+    static unsigned long lastStationRetry = 0;
+    if (!isConnected) {
+        bool apInUse = apActive && WiFi.softAPgetStationNum() > 0;
+        if (!apInUse && millis() - lastStationRetry >= 120000UL) {
+            lastStationRetry = millis();
+            DEBUG_PRINTLN("→ Neuer WLAN-Verbindungsversuch...");
+            beginStation();
+            // Solange der AP laeuft: nur dieser eine Versuch, kein Dauer-
+            // Reconnect im Hintergrund, der den AP fuer Clients unbrauchbar macht.
+            if (apActive) WiFi.setAutoReconnect(false);
+        }
+    }
     wasConnected = isConnected;
+}
+
+// ════════════════════════════════════════════════════════════════
+// AP-TIMEOUT
+// ════════════════════════════════════════════════════════════════
+// Der Access Point schaltet sich AP_TIMEOUT nach dem Start ab – unabhaengig
+// davon, ob ein Heim-WLAN konfiguriert oder verbunden ist. Solange ein
+// Geraet mit dem AP verbunden ist, laeuft der Timer nicht ab (sonst fliegt
+// man mitten in der Konfiguration raus); er startet neu, sobald es sich
+// trennt. Im Stromausfall-Modus bleibt der AP an, damit die Warnung
+// quittiert werden kann. Zurueck bekommt man den AP durch einen Neustart
+// (Strom aus/an). Die Weboberflaeche bleibt im Heim-WLAN erreichbar.
+void checkApTimeout() {
+#if defined(DEBUG_MODE) && (DEBUG_MODE == false)
+    if (!apActive) return;
+    if (powerLossDetected || WiFi.softAPgetStationNum() > 0) {
+        apStartTime = millis();
+        return;
+    }
+    if (millis() - apStartTime < AP_TIMEOUT) return;
+
+    dnsServer.stop();
+    WiFi.softAPdisconnect(true);  // schaltet nur das AP-Interface ab
+    if (!staEnabled || strlen(staSsid) == 0) {
+        WiFi.mode(WIFI_OFF);
+    } else {
+        // Station weiterlaufen lassen und ab jetzt selbststaendig verbinden
+        WiFi.setAutoReconnect(true);
+    }
+    apActive = false;
+    DEBUG_PRINTLN("⚠ AP nach Timeout deaktiviert (Neustart aktiviert ihn wieder)");
+#else
+    #warning "DEBUG_MODE ist nicht false - WiFi AP bleibt immer aktiv"
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2935,17 +3165,30 @@ void setup()
     while(TEST_RGB_ONLY);
 
     Wire.begin(I2C_SDA, I2C_SCL);
-    
-    if (rtc.begin())
+
+    // RTC nur einmal initialisieren (rtc.begin() legt bei jedem Aufruf ein
+    // neues I2C-Geraet auf dem Heap an) – danach nur noch rtcPresent pruefen.
+    bool rtcWasStopped = false;
+    #if (defined(USE_RTC) && USE_RTC == false)
+        #warning "RTC not in use!"
+        rtcPresent = false;
+    #else
+        rtcPresent = rtc.begin();
+    #endif
+    if (rtcPresent)
     {
         if (!rtc.isrunning()) {
-            rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+            // Kompilierzeit ist Ortszeit, die RTC laeuft in UTC -> umrechnen
+            uint32_t t = DateTime(F(__DATE__), F(__TIME__)).unixtime() - 3600;
+            if (isDST(t)) t -= 3600;
+            rtc.adjust(DateTime(t));
+            rtcWasStopped = true;
         }
         DEBUG_PRINTLN("✓ RTC initialisiert");
     }
     else
     {
-      DEBUG_PRINTLN("❌ Keine RTC erkannt");  
+      DEBUG_PRINTLN("❌ Keine RTC erkannt");
     }
 
     EEPROM.begin(EEPROM_SIZE);
@@ -2968,6 +3211,12 @@ void setup()
     loadConfig();
     loadDriftRate();
     loadRTCDrift();
+    if (rtcWasStopped) {
+        // RTC wurde eben notduerftig gestellt – alter Referenzpunkt ungueltig
+        rtcRefTime = 0;
+        rtcRefOffset = 0.0f;
+        rtcRefPrecise = false;
+    }
     loadOTAVersion();
     loadWiFiStationConfig();
     loadNTPConfig();
@@ -2990,10 +3239,19 @@ void setup()
         // gegen den 8 Tage alten Wert laufen lassen.
         saveLastKnownTime();
     }
+    // Nach einem OTA-Neustart wird die RTC in detectPowerLoss() nicht gelesen –
+    // dann hier nachholen, sonst liefe die Uhr mit der zuletzt gespeicherten
+    // Zeit weiter (bis zu 1 h alt).
+    if (!anchorValid && rtcPresent) {
+        unsigned long t = getCorrectedRTCTime();
+        if (t > 1735689600UL) anchorTime(t, false);
+    }
 
     // User-Helligkeit (0-80) auf LED-Helligkeit (0-204) mappen
     FastLED.setBrightness(map(brightness, 0, 80, 0, 204));
 
+    // Keine WLAN-Einstellungen bei jedem Boot/Verbindungsaufbau ins Flash schreiben
+    WiFi.persistent(false);
     WiFi.mode(WIFI_AP_STA);  // Dual-Mode: AP + Station
     WiFi.softAP(AP_SSID, AP_PASSWORD);
 
@@ -3093,6 +3351,9 @@ void updateBrightness() {
     smoothedAdc = (smoothedAdc * 3 + adcValue) / 4;
     adcValue = smoothedAdc;
 
+    // Ungueltige Kalibrierung (Min >= Max) -> map() wuerde durch 0 teilen
+    if (autoBrightnessMaxADC <= autoBrightnessMinADC) return;
+
     // Auf kalibrierten Bereich begrenzen
     if (adcValue < autoBrightnessMinADC) adcValue = autoBrightnessMinADC;
     if (adcValue > autoBrightnessMaxADC) adcValue = autoBrightnessMaxADC;
@@ -3109,72 +3370,53 @@ void updateBrightness() {
     newBrightness = map(newBrightness, 0, 80, 0, 204);
 
     // Helligkeit setzen + sofort an die LEDs senden (sonst wirkt der neue
-    // Wert erst beim naechsten Minuten-Refresh durch displayTime).
-    FastLED.setBrightness(newBrightness);
-    showLEDs();
+    // Wert erst beim naechsten Minuten-Refresh durch displayTime). Nur bei
+    // Aenderung – sonst wird zweimal pro Sekunde unnoetig ein Frame geschickt.
+    if (newBrightness != FastLED.getBrightness()) {
+        FastLED.setBrightness(newBrightness);
+        showLEDs();
+    }
 }
 
 void loop()
 {
-    if (apActive)
-    {
-      dnsServer.processNextRequest();
-
-      // LOGGING: Vor handleClient
-      if (server.client() && server.client().available())
-      {
-        DEBUG_PRINTLN("→ Eingehender Request!");
-      }
-
-      server.handleClient();
-
-      // WiFi Station überwachen (Auto-Reconnect)
-      checkWiFiConnection();
-
-      // NTP-Sync prüfen (stündlich)
-      checkNTPSync();
-
-      // Aktuelle Uhrzeit stündlich ins EEPROM schreiben, damit
-      // detectPowerLossWithRTC beim naechsten Boot den echten
-      // Offline-Zeitraum kennt (ohne diesen Save staende dort nur
-      // die Zeit vom letzten manuellen Speichern).
-      static unsigned long lastTimePersist = 0;
-      if (millis() - lastTimePersist > 3600000UL) {  // 60 min
-          saveLastKnownTime();
-          lastTimePersist = millis();
-      }
-
-      #if defined(DEBUG_MODE) && (DEBUG_MODE == false)
-        #warning "WiFi AP: Timeout nur wenn keine Station konfiguriert"
-        // AP-Timeout Strategie (Produktionsmodus):
-        // - AP bleibt PERMANENT aktiv wenn WiFi Station konfiguriert ist (egal ob verbunden!)
-        //   → Ermöglicht Neukonfiguration bei falschen Credentials
-        // - AP schaltet nach 5 Min ab NUR wenn KEINE Station konfiguriert ist
-        //   → Stromsparen im reinen AP-Modus
-        //
-        // WICHTIG: Zugriff für Konfiguration muss IMMER möglich sein!
-        // Wenn staEnabled=true → Benutzer will Dual-Mode → AP muss erreichbar bleiben
-
-        if (!staEnabled && millis() - apStartTime > AP_TIMEOUT)
-        {
-          WiFi.softAPdisconnect(true);
-          WiFi.mode(WIFI_OFF);
-          apActive = false;
-          DEBUG_PRINTLN("⚠ AP nach Timeout deaktiviert (kein Dual-Mode)");
-        }
-      #else
-        #warning "DEBUG_MODE is true, so WiFi AP bleibt immer aktiv"
-      #endif
+    // Webserver, WLAN-Ueberwachung und NTP laufen IMMER – nicht nur solange
+    // der AP aktiv ist. Frueher hing alles an apActive: nach einem AP-Timeout
+    // waere die Uhr auch im Heim-WLAN nicht mehr erreichbar gewesen und haette
+    // keine NTP-Zeit mehr uebernommen.
+    if (apActive) {
+        dnsServer.processNextRequest();
     }
-    
-  // Auto-Brightness aktualisieren (intern auf alle brightnessUpdateInterval ms gedrosselt)
-  updateBrightness();
+    server.handleClient();
+    checkWiFiConnection();   // Station ueberwachen, ggf. neu verbinden
+    checkNTPSync();          // neue SNTP-Zeit uebernehmen
+    checkApTimeout();        // AP nach Timeout abschalten
+    handlePendingRestart();  // z.B. nach OTA, nachdem die Antwort raus ist
+
+    // Aktuelle Uhrzeit stuendlich ins EEPROM schreiben, damit
+    // detectPowerLossWithRTC beim naechsten Boot den echten Offline-Zeitraum
+    // kennt. Nicht im Stromausfall-Modus: sonst wuerde ein Neustart die noch
+    // nicht quittierte Warnung stillschweigend verschwinden lassen.
+    if (!powerLossDetected && millis() - lastTimePersistMs >= 3600000UL) {
+        saveLastKnownTime();
+    }
 
   // Stromausfall-Modus: nur SOS rendern, normale Anzeige uebergehen.
   // Webserver und Auto-Reconnect laufen oben weiter, der User kann die
   // Zeit setzen und ueber /powerloss/clear quittieren.
   if (powerLossDetected) {
     renderPowerLossSOS();
+    yield();
+    return;
+  }
+
+  // Auto-Brightness (intern auf brightnessUpdateInterval gedrosselt) – erst
+  // nach dem SOS-Zweig, sonst ueberschreibt sie dessen feste Helligkeit.
+  updateBrightness();
+
+  // Laufender Pattern-Test: normale Zeitanzeige aussetzen
+  if (patternTestRunning) {
+    runPatternTestStep();
     yield();
     return;
   }
