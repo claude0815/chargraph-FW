@@ -783,8 +783,8 @@
                 WPA2-Enterprise (PEAP/MS-CHAPv2)
             </label>
             <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                Aktivieren f&uuml;r Firmen-/Schul-WLANs. Server-Zertifikate werden
-                <strong>nicht</strong> verifiziert.
+                Aktivieren f&uuml;r Firmen-/Schul-WLANs (PEAP/MS-CHAPv2). Das Server-Zertifikat
+                wird nur gepr&uuml;ft, wenn in <code>include/ca_cert.inc</code> ein CA-Zertifikat steht.
             </div>
         </div>
 
@@ -798,11 +798,12 @@
             <div class="form-group">
                 <label>Anonymous Identity (Outer):</label>
                 <input type="text" id="staAnonIdentity" maxlength="63"
-                       placeholder="anonymous"
+                       placeholder="leer = Benutzername (wie Android)"
                        style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box;">
                 <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                    Wird im Klartext &uuml;bertragen. Default <code>anonymous</code>; manche
-                    RADIUS-Server wollen einen Realm dahinter (z.B. <code>anonymous@schule.de</code>).
+                    Wird im Klartext &uuml;bertragen. <strong>Leer lassen</strong> = Benutzername wird
+                    gesendet (genau wie Android/Windows bei leerer &bdquo;Anonymer Identit&auml;t&ldquo;).
+                    Nur ausf&uuml;llen, wenn die Anleitung es verlangt (z.B. <code>anonymous@schule.de</code>).
                 </div>
             </div>
         </div>
@@ -2078,7 +2079,7 @@
                         document.getElementById('staIdentity').value = data.staIdentity || '';
                         document.getElementById('staAnonIdentity').value =
                             (data.staAnonIdentity !== undefined && data.staAnonIdentity !== null)
-                                ? data.staAnonIdentity : 'anonymous';
+                                ? data.staAnonIdentity : '';
                         document.getElementById('staHostname').value = data.staHostname || '';
                         toggleEnterpriseFields();
                         // Passwort: Backend liefert Platzhalter, falls bereits eines gespeichert ist

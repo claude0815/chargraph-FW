@@ -935,23 +935,19 @@ void loadWiFiStationConfig() {
     }
     staIdentity[63] = '\0';
 
-    // Outer/Anonymous Identity laden; Fallback Default = "anonymous"
-    bool anonFound = false;
+    // Outer/Anonymous Identity laden. Leer ist ein gueltiger, gewollter Wert
+    // (= Benutzername wird als Outer Identity gesendet, wie bei Android).
+    // Frueher wurde ein bewusst leer gespeichertes Feld beim Laden wieder zu
+    // "anonymous" – das Feld liess sich also nie dauerhaft leeren.
     for (int i = 0; i < 64; i++) {
         byte c = EEPROM.read(ADDR_STA_ENTERPRISE_ANON_ID + i);
         if (c == 0 || c == 0xFF) {
             staAnonIdentity[i] = '\0';
-            if (i > 0) anonFound = true;
             break;
         }
         staAnonIdentity[i] = c;
-        anonFound = true;
     }
     staAnonIdentity[63] = '\0';
-    if (!anonFound) {
-        strncpy(staAnonIdentity, "anonymous", sizeof(staAnonIdentity) - 1);
-        staAnonIdentity[sizeof(staAnonIdentity) - 1] = '\0';
-    }
 
     // DHCP-Hostname laden (Default leer)
     for (int i = 0; i < 64; i++) {
@@ -2845,10 +2841,15 @@ void beginStation() {
         DEBUG_PRINTF("  Username: %s\n", staIdentity);
 
         // SSID via SDK setzen (kein PSK, das uebernimmt der Enterprise-Layer)
+        // _current: NICHT ins Flash schreiben (wifi_station_set_config()
+        // loescht bei jedem Aufruf einen Flash-Sektor – bei Wiederholungs-
+        // versuchen alle 2 min waere das Flash bald verschlissen). Vorher
+        // trennen, damit kein halber Versuch mit alter Konfiguration laeuft.
+        wifi_station_disconnect();
         struct station_config conf;
         memset(&conf, 0, sizeof(conf));
         strncpy((char*)conf.ssid, staSsid, sizeof(conf.ssid));
-        wifi_station_set_config(&conf);
+        wifi_station_set_config_current(&conf);
 
         // Enterprise-Auth aktivieren; ohne CA-Cert wird der RADIUS-Server
         // NICHT verifiziert (bewusste Entscheidung – siehe vars.inc).
@@ -2875,24 +2876,23 @@ void beginStation() {
         if (caLen > 0) {
             DEBUG_PRINTF("  CA-Cert:  %u bytes (Server wird verifiziert)\n",
                          (unsigned)caLen);
-            wifi_station_set_enterprise_ca_cert((uint8_t*)wpa2_ca_cert, caLen);
+            // Laenge inkl. abschliessendem '\0' (wie sizeof() in den Espressif-
+            // Beispielen) – PEM-Parser erwarten den Terminator mitgezaehlt.
+            wifi_station_set_enterprise_ca_cert((uint8_t*)wpa2_ca_cert, caLen + 1);
         } else {
             DEBUG_PRINTLN("  CA-Cert:  <keiner – Server wird NICHT verifiziert>");
         }
 
-        // Outer Identity (anonymous identity): konfigurierbar.
-        // - Feld leer  -> set_enterprise_identity gar nicht aufrufen,
-        //                  ESP-SDK sendet dann seinen Default
-        //                  "anonymous@espressif.com" (valides user@realm).
-        // - "anonymous" -> reiner String ohne Realm.
-        // - "anonymous@schule.de" -> mit Realm, wie es viele Cisco-ISE-Setups
-        //                            erwarten.
-        if (strlen(staAnonIdentity) > 0) {
-            DEBUG_PRINTF("  Outer:    %s\n", staAnonIdentity);
-            wifi_station_set_enterprise_identity((uint8_t*)staAnonIdentity, strlen(staAnonIdentity));
-        } else {
-            DEBUG_PRINTLN("  Outer:    <SDK-Default 'anonymous@espressif.com'>");
-        }
+        // Outer Identity (anonymous identity), geht im Klartext ueber die Luft
+        // und entscheidet beim RADIUS ueber Realm-Routing/Policy:
+        // - Feld leer -> Benutzername als Outer Identity. Genau das tun
+        //   Android/Windows, wenn "Anonyme Identitaet" leer bleibt (frueher
+        //   sendete das ESP hier den SDK-Default "anonymous@espressif.com",
+        //   den kein Schul-RADIUS kennt).
+        // - "anonymous" / "anonymous@schule.de" -> wie eingetragen.
+        const char* outer = strlen(staAnonIdentity) > 0 ? staAnonIdentity : staIdentity;
+        DEBUG_PRINTF("  Outer:    %s%s\n", outer, outer == staIdentity ? " (= Benutzername)" : "");
+        wifi_station_set_enterprise_identity((uint8_t*)outer, strlen(outer));
         wifi_station_set_enterprise_username((uint8_t*)staIdentity, strlen(staIdentity));
         wifi_station_set_enterprise_password((uint8_t*)staPassword, strlen(staPassword));
 
